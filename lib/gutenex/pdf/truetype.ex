@@ -1,10 +1,13 @@
 defmodule Gutenex.PDF.TrueType do
   use Bitwise, only_operators: true
   def new do
-    %{:version => 0, :tables => [], :name => nil, :bbox => [],
-   :ascent => 0, :descent => 0, :capHeight => 0, :unitsPerEm => 0,
-   :usWeightClass => 500, :stemV => 0, :italicAngle => 0, :flags => 0,
-   :glyphWidths => [], :defaultWidth => 0}
+    %{
+      :version => 0, :tables => [], :name => nil, :bbox => [],
+      :ascent => 0, :descent => 0, :capHeight => 0, :unitsPerEm => 0,
+      :usWeightClass => 500, :stemV => 0, :italicAngle => 0, :flags => 0,
+      :glyphWidths => [], :defaultWidth => 0,
+      "SubType" => {:name, "Type0"}
+    }
   end
   def parse(ttf, filename) do
     f = File.open!(filename)
