@@ -70,7 +70,7 @@ defmodule Gutenex.PDF.Serialization do
 
   def serialize({:array, elements}) when is_list(elements) do
     inner = Enum.map(elements, &serialize/1)
-    |> Enum.join(",")
+    |> Enum.join(" ")
     " [" <> inner <> "] "
   end
 
@@ -81,7 +81,7 @@ defmodule Gutenex.PDF.Serialization do
   end
 
   def serialize({:dict, map}) when is_map(map) do
-    "<<#{serialize_dictionary_pairs(map)}>>"
+    "<< #{serialize_dictionary_pairs(map)} >>"
   end
 
   def serialize({:stream, {:dict, options}, payload}) when is_binary(payload) do
@@ -95,10 +95,7 @@ defmodule Gutenex.PDF.Serialization do
   end
 
   def serialize({:trailer, {:dict, _dict}=trailer}) do
-    """
-    trailer
-    #{serialize(trailer)}
-    """
+    "trailer\n#{serialize(trailer)}\n"
   end
 
 
@@ -113,7 +110,7 @@ defmodule Gutenex.PDF.Serialization do
   # TODO: Implement filters defined on page PDF 42 of
   # http://partners.adobe.com/public/developer/en/pdf/PDFReference.pdf
   defp prepare_stream(options, payload) do
-    options = Map.put(options, "Length", String.length(payload))
+    options = Map.put(options, "Length", byte_size(payload))
     {options, payload}
   end
 
