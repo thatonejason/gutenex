@@ -6,7 +6,7 @@ defmodule Gutenex.PDF.TrueType do
       :ascent => 0, :descent => 0, :capHeight => 0, :unitsPerEm => 0,
       :usWeightClass => 500, :stemV => 0, :italicAngle => 0, :flags => 0,
       :glyphWidths => [], :defaultWidth => 0,
-      "SubType" => {:name, "Type0"}
+      "SubType" => {:name, "Type0"}, :embed => nil
     }
   end
   def parse(ttf, filename) do
@@ -17,6 +17,16 @@ defmodule Gutenex.PDF.TrueType do
     |> readHeader(data)
     |> extractName(data)
     |> extractMetrics(data)
+    |> markEmbeddedPart(data)
+  end
+  defp markEmbeddedPart(ttf, data) do
+    raw_cff = rawTable(ttf, "CFF ", data)
+    embedded = if raw_cff do
+      raw_cff
+    else
+      data
+    end
+    %{ttf | :embed => embedded}
   end
   defp extractVersion(ttf, <<version :: size(32), data :: binary>>) do
     {%{ttf | :version => version}, data}

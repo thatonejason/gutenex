@@ -17,7 +17,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
   end
 
   # probably embed_fonts
-  defp build_fonts(%RenderContext{}=render_context, [{font_alias, %{ "SubType" => {:name, "Type0"} }=embedded } | fonts]) do
+  defp build_fonts(%RenderContext{}=render_context, [{font_alias, %{ "SubType" => {:name, "Type0"} }=ttf } | fonts]) do
     # add stream, add descriptor, add descfont, add tounicodemap, add font
     # font =  {:dict, font_definition}
     fo = RenderContext.current_object(render_context)
@@ -40,21 +40,56 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     #fo = RenderContext.current_object(rc)
     #fr = RenderContext.current_reference(rc)
     # set up info
-    base_font = %{}
-    cid_font = %{}
-    metrics = %{}
-    embed_bytes = <<>>
+    base_font = %{
+      "Type" => {:name, "Font"},
+      "Encoding" => {:name, "Identity-H"},
+      "Subtype" => {:name, "Type0"},
+      "BaseFont" => {:name, ttf.name},
+      "DescendantFonts" => {:array, [cidr]}
+    }
+    cid_font = %{
+      "Type" => {:name, "Font"},
+      "Subtype" => {:name, "CIDFontType0"},
+      "BaseFont" => {:name, ttf.name},
+      "CIDSystemInfo" => {:dict, %{"Ordering" => "Identity", "Registry" => "Adobe", "Supplement" => 0} },
+      "FontDescriptor" => der,
+      "DW" => ttf.defaultWidth,
+      "W" => {:array, [ 1, {:array, [ 227 ]}, 27, {:array, [ 325 ]}, 47, {:array, [ 749 ]}, 66, {:array, [ 591 ]}, 70, {:array, [ 581 ]}, 74,
+          {:array, [ 304, 305 ]}, 79, {:array, [ 641, 626, 644 ]}, 84, {:array, [ 495, 420 ]}]}
+    }
+    metrics = %{
+      "Type" => {:name, "FontDescriptor"},
+      "FontName" => {:name, ttf.name},
+      "FontWeight" => ttf.usWeightClass,
+      "Flags" => ttf.flags,
+      "FontBBox" => {:rect, ttf.bbox},
+      "ItalicAngle" => ttf.italicAngle,
+      "Ascent" => ttf.ascent,
+      "Descent" => ttf.descent,
+      "CapHeight" => ttf.capHeight,
+      "StemV" => ttf.stemV,
+      "FontFile3" => er  #TODO: handle different composite types
+    }
 
-    %RenderContext{ec |
+    z = :zlib.open()
+    :zlib.deflateInit(z)
+    zout = :zlib.deflate(z, ttf.embed)
+    compressed = IO.iodata_to_binary(zout)
+    :zlib.close(z)
+
+    embed_bytes = {:stream, {:dict, %{"Subtype" => {:name, "CIDFontType0C"}, "Length" => byte_size(compressed), "Filter" => {:name, "FlateDecode"}}}, compressed}
+
+    rc = %RenderContext{RenderContext.next_index(ec) |
      font_aliases: Map.put(ec.font_aliases, font_alias, fr),
      font_objects: [
        { fo, {:dict, base_font} },
        { cido, {:dict, cid_font} },
        { deo, {:dict, metrics} },
-       { eo, {:stream, embed_bytes} }
+       { eo, embed_bytes }
        | ec.font_objects
      ]
     }
+    build_fonts(rc, fonts)
   end
 
 

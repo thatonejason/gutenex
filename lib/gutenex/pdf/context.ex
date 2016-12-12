@@ -21,7 +21,7 @@ defmodule Gutenex.PDF.Context do
     media_box: Page.page_size(:letter),
     generation_number: 0)
 
-  def registerFont(context, font_alias, font_def) do
+  def register_font(context, font_alias, font_def) do
     %Gutenex.PDF.Context{
       context |
       fonts: Map.put(context.fonts, font_alias, font_def)

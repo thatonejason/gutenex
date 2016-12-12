@@ -136,6 +136,14 @@ defmodule Gutenex do
   end
 
   @doc """
+  Register a font for embedding
+  """
+  def register_font(pid, font_name, font_data) do
+    GenServer.cast(pid, {:font, :register, {font_name, font_data}})
+    pid
+  end
+
+  @doc """
   Gets the current stream
   """
   def stream(pid) do
@@ -386,6 +394,15 @@ defmodule Gutenex do
     stream = stream <> Font.set_font(context.fonts, font_name)
     {:noreply, [context, stream]}
   end
+
+  @doc """
+    Register a font for usage
+  """
+  def handle_cast({:font, :register, {font_name, font_data}}, [context, stream]) do
+    new_context = Gutenex.PDF.Context.register_font(context, font_name, font_data)
+    {:noreply, [new_context, stream]}
+  end
+
 
   #####################################
   #             Geometry              #
