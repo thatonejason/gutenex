@@ -313,7 +313,6 @@ defmodule Gutenex do
   def handle_cast({:text, :write, text_to_write}, [context, stream]) do
     stream = if Map.has_key?(context.current_font, :cid2gid) do
       output = TrueType.layout_text(context.current_font, text_to_write)
-               |> Text.hexstring
       stream <> output
     else
       stream <> Text.write_text(text_to_write)
@@ -328,7 +327,6 @@ defmodule Gutenex do
   def handle_cast({:text, :write_br, text_to_write}, [context, stream]) do
     stream = if Map.has_key?(context.current_font, :cid2gid) do
       output = TrueType.layout_text(context.current_font, text_to_write)
-               |> Text.hexstring
       stream <> output <> Text.break_text
     else
       stream <> Text.write_text_br(text_to_write)

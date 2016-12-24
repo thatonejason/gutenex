@@ -25,14 +25,51 @@ defmodule Gutenex.PDF.TrueType do
   # later we will want to apply
   # ligatures, kerning, etc
   def layout_text(ttf, text) do
-    gly = text
+    glyphs = text
     |> String.to_charlist
     |> Enum.map(fn(cid) -> Map.get(ttf.cid2gid, cid, 0) end)
-    #IO.inspect ttf.cid2gid
-    #IO.inspect String.to_charlist(text)
-    #IO.inspect gly
-    gly
+    
+    glyphs
+    |> handle_substitutions
+    |> position_glyphs
+    |> generate_pdf_instructions
   end
+  defp handle_substitutions(glyphs) do
+    # use data in GSUB to do any substitutions
+    # locate script in GSUB scriptlist
+    # lookup LangSys table (or use DefaultLangSys)
+    # index into GPOS FeatureList table
+    # select features we want to apply
+    # see spec for required, never disabled, and recommended
+    # each feature provides lookup indices
+    # combine indices, apply in order given in LookupList table
+    # for each lookup, apply to each glyph in order
+    glyphs
+  end
+  defp position_glyphs(glyphs) do
+    # use data in the GPOS and BASE table
+    # to kern, position, and join
+    # locate script in GPOS scriptlist
+    # lookup LangSys table (or use DefaultLangSys)
+    # index into GPOS FeatureList table
+    # select features we want to apply
+    # see spec for required, never disabled, and recommended
+    # each feature provides lookup indices
+    # combine indices, apply in order given in LookupList table
+    # for each lookup, apply to each glyph in order
+    #
+    # no GPOS, that's fine, apply kern table
+    glyphs
+  end
+  defp generate_pdf_instructions(glyphs) do
+    # for now simply hex-encode as 16BE values
+    # once positioning included may need to interleave
+    # glyph and positioning data
+    hex = glyphs
+          |> Enum.map_join(&(Integer.to_string(&1, 16) |> String.pad_leading(4, "0")))
+    "<#{hex}> Tj\n"
+  end
+
   defp markEmbeddedPart(ttf, data) do
     raw_cff = rawTable(ttf, "CFF ", data)
     embedded = if raw_cff do
@@ -390,27 +427,43 @@ defmodule Gutenex.PDF.TrueType do
     charmap
   end
 
+  # read CMap format 12 (5.2.1.3.7 Segmented coverage)
+  # This is required by Windows fonts (Platform 3 encodoing 10) that have UCS-4 characters
+  # and is a SUPERSET of the data stored in format 4
+  defp readCMapData(platform, encoding, <<12::16, _::16, length::32, lang::32, groups::32, subdata::binary>>, cmap) do
+    charmap = readCMap12Entry([], subdata, groups)
+              |> Enum.reduce(%{}, fn({s,e,g}, acc) -> mapCMap12Entry(s,e,g,acc) end)
+              |> Map.merge(cmap)
+    charmap
+  end
+
   #unknown formats we ignore for now
   defp readCMapData(platform, encoding, <<fmt::16, subdata::binary>>, cmap) do
     #IO.inspect {"READ", fmt, platform, encoding}
     cmap
+  end
+  
+  defp mapCMap12Entry(startcode, endcode, glyphindex, charmap) do
+    offset = glyphindex-startcode
+    r = startcode..endcode
+        |> Map.new(fn(x) -> {x, x + offset} end)
+        |> Map.merge(charmap)
+  end
+  defp readCMap12Entry(entries, _, 0), do: entries
+  defp readCMap12Entry(entries, data, count) do
+    <<s::32, e::32, g::32, remaining::binary>> = data
+    readCMap12Entry([{s,e,g} | entries], remaining, count - 1)
   end
 
   defp mapSegment({0xFFFF, 0xFFFF, _, _}, charmap, _, _) do
     charmap
   end
   defp mapSegment({first, last, delta, 0}, charmap, _, _) do
-    #if last > 50 and first < 40 do
-      #  IO.inspect {first, last, delta, 0}
-      #end
     first..last
      |> Map.new(fn(x) -> {x, (x + delta) &&& 0xFFFF} end)
      |> Map.merge(charmap)
   end
   defp mapSegment({first, last, delta, offset}, charmap, segment_index, data) do
-    #if last > 50 and first < 40 do
-      # IO.inspect {first, last, delta, offset}
-      #end
     first..last
      |> Map.new(fn(x) ->
        offsetx = (x - first) * 2 + offset + 2 * segment_index

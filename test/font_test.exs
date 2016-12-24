@@ -35,7 +35,7 @@ defmodule GutenexFontTest do
   test "embed font" do
     File.rm("./tmp/embed.pdf")
     ttf = TrueType.new
-          |> TrueType.parse("./test/support/fonts/NotoSans-Bold.ttf")
+          |> TrueType.parse("./test/support/fonts/NotoSans-Italic.ttf")
     {:ok, pid} = Gutenex.start_link
     Gutenex.register_font(pid, "NotoSans", ttf)
       |> Gutenex.begin_text
@@ -46,9 +46,9 @@ defmodule GutenexFontTest do
       |> Gutenex.write_text_br("ABC")
       |> Gutenex.set_font("NotoSans", 32)
       |> Gutenex.text_render_mode(:fill)
-      |> Gutenex.write_text_br("Noto test find")
+      |> Gutenex.write_text_br("Noto Sans")
+      |> Gutenex.write_text_br("kern AWAY and ligature in\uFB04fflnity")
       |> Gutenex.write_text("Japanese \u713C")
-      |> Gutenex.write_text("\u713C")
       |> Gutenex.end_text
       |> Gutenex.export("./tmp/embed.pdf")
   end
