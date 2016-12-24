@@ -16,7 +16,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     }
   end
 
-  # probably embed_fonts
+  # This handles embedding a Type0 composite font per the 1.7 spec
   defp build_fonts(%RenderContext{}=render_context, [{font_alias, %{ "SubType" => {:name, "Type0"} }=ttf } | fonts]) do
     # add stream, add descriptor, add descfont, add tounicodemap, add font
     # font =  {:dict, font_definition}
@@ -26,7 +26,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     cidc = RenderContext.next_index(render_context)
     cido = RenderContext.current_object(cidc)
     cidr = RenderContext.current_reference(cidc)
-    # decriptor = {:dict, desc}
+    # descriptor = {:dict, desc}
     dec = RenderContext.next_index(cidc)
     deo = RenderContext.current_object(dec)
     der = RenderContext.current_reference(dec)
@@ -34,18 +34,18 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     ec = RenderContext.next_index(dec)
     eo = RenderContext.current_object(ec)
     er = RenderContext.current_reference(ec)
-
     # CMap = {:stream, details}
-    #rc = %RenderContext{RenderContext.next_index(render_context)}
-    #fo = RenderContext.current_object(rc)
-    #fr = RenderContext.current_reference(rc)
+    cmapc = RenderContext.next_index(ec)
+    cmapo = RenderContext.current_object(cmapc)
+    cmapr = RenderContext.current_reference(cmapc)
     # set up info
     base_font = %{
       "Type" => {:name, "Font"},
       "Encoding" => {:name, "Identity-H"},
       "Subtype" => {:name, "Type0"},
       "BaseFont" => {:name, ttf.name},
-      "DescendantFonts" => {:array, [cidr]}
+      "DescendantFonts" => {:array, [cidr]},
+      "ToUnicode" => cmapr
     }
     cid_font = %{
       "Type" => {:name, "Font"},
@@ -54,8 +54,8 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
       "CIDSystemInfo" => {:dict, %{"Ordering" => "Identity", "Registry" => "Adobe", "Supplement" => 0} },
       "FontDescriptor" => der,
       "DW" => ttf.defaultWidth,
-      "W" => {:array, [ 1, {:array, [ 227 ]}, 27, {:array, [ 325 ]}, 47, {:array, [ 749 ]}, 66, {:array, [ 591 ]}, 70, {:array, [ 581 ]}, 74,
-          {:array, [ 304, 305 ]}, 79, {:array, [ 641, 626, 644 ]}, 84, {:array, [ 495, 420 ]}]}
+      # TODO: build this dynamically - this is blindly copied from sample PDF at the moment
+      "W" => glyph_widths(ttf)
     }
     metrics = %{
       "Type" => {:name, "FontDescriptor"},
@@ -79,13 +79,14 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
 
     embed_bytes = {:stream, {:dict, %{"Subtype" => {:name, "CIDFontType0C"}, "Length" => byte_size(compressed), "Filter" => {:name, "FlateDecode"}}}, compressed}
 
-    rc = %RenderContext{RenderContext.next_index(ec) |
+    rc = %RenderContext{RenderContext.next_index(cmapc) |
      font_aliases: Map.put(ec.font_aliases, font_alias, fr),
      font_objects: [
        { fo, {:dict, base_font} },
        { cido, {:dict, cid_font} },
        { deo, {:dict, metrics} },
-       { eo, embed_bytes }
+       { eo, embed_bytes },
+       { cmapo, identity_tounicode_cmap() }
        | ec.font_objects
      ]
     }
@@ -117,4 +118,74 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     ]
   end
 
+  defp glyph_widths(ttf) do
+    {b, _, :end} = ttf.glyphWidths ++ [:end]
+    |> Enum.with_index
+    |> Enum.reduce({[], 0, 0}, fn({w, gid}, {buckets, lg, lw}) -> bucketWidth(gid, w, buckets, lg, lw) end)
+    cw = b |> Enum.reduce([], fn(x, acc) -> fmtb(x, acc) end)
+    {:array, cw}
+  end
+
+  def fmtb({s,w}, output) do
+    [s, {:array, w}] ++ output
+  end
+  def fmtb({s,e,w}, output) do
+    [s,e,w] ++ output
+  end
+
+  def bucketWidth(gid, width, [], 0, _) do
+    {[], gid, width}
+  end
+  def bucketWidth(gid, width, [], 1, width) do
+    {[{1, 1, width}], gid, width}
+  end
+  def bucketWidth(gid, width, [], 1, lw) do
+    {[{1, [lw]}], gid, width}
+  end
+  def bucketWidth(gid, width, [{start, widths} | tail], lastgid, width) do
+    {[{lastgid, lastgid, width} | [{start, widths} | tail]], gid, width}
+  end
+  def bucketWidth(gid, width, [{start, widths} | tail], _lastgid, lastWidth) do
+    {[{start, widths ++ [lastWidth]} | tail], gid, width}
+  end
+  def bucketWidth(gid, width, [{s, e, w} | tail], lastgid, w) do
+    {[{s, lastgid, w} | tail], gid, width}
+  end
+  def bucketWidth(gid, width, [{s, e, w} | tail], lastgid, width) do
+    {[{lastgid, lastgid, width} | [{s, e, w} | tail]], gid, width}
+  end
+  def bucketWidth(gid, width, [{s, e, w} | tail], lastgid, lw) do
+    {[{lastgid, [lw]} | [{s, e, w} | tail]], gid, width}
+  end
+
+  defp identity_tounicode_cmap() do
+    {:stream, """
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo
+<< /Registry (Adobe)
+/Ordering (UCS)
+/Supplement 0
+>> def
+/CMapName /Adobe−Identity−UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+2 beginbfrange
+<0000> <005E> <0020>
+<005F> <0061> [<00660066> <00660069> <00660066006C>]
+endbfrange
+1 beginbfchar
+<3A51> <D840DC3E>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
 end
+end
+    """}
+  end
+end
+
+

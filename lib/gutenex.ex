@@ -3,6 +3,7 @@ defmodule Gutenex do
   alias Gutenex.PDF
   alias Gutenex.PDF.Context
   alias Gutenex.PDF.Text
+  alias Gutenex.PDF.TrueType
   alias Gutenex.PDF.Font
 
   alias Gutenex.Geometry
@@ -310,7 +311,14 @@ defmodule Gutenex do
     Write some text!
   """
   def handle_cast({:text, :write, text_to_write}, [context, stream]) do
-    stream = stream <> Text.write_text(text_to_write)
+    stream = if Map.has_key?(context.current_font, :cid2gid) do
+      output = TrueType.layout_text(context.current_font, text_to_write)
+               |> Text.hexstring
+      stream <> output
+    else
+      stream <> Text.write_text(text_to_write)
+    end
+
     {:noreply, [context, stream]}
   end
 
@@ -318,7 +326,13 @@ defmodule Gutenex do
     Write some text more break line!
   """
   def handle_cast({:text, :write_br, text_to_write}, [context, stream]) do
-    stream = stream <> Text.write_text_br(text_to_write)
+    stream = if Map.has_key?(context.current_font, :cid2gid) do
+      output = TrueType.layout_text(context.current_font, text_to_write)
+               |> Text.hexstring
+      stream <> output <> Text.break_text
+    else
+      stream <> Text.write_text_br(text_to_write)
+    end
     {:noreply, [context, stream]}
   end
 
@@ -384,7 +398,8 @@ defmodule Gutenex do
   """
   def handle_cast({:font, :set, {font_name, font_size}}, [context, stream]) do
     stream = stream <> Font.set_font(context.fonts, font_name, font_size)
-    {:noreply, [context, stream]}
+    new_context = Context.set_current_font(context, font_name)
+    {:noreply, [new_context, stream]}
   end
 
   @doc """
@@ -392,7 +407,8 @@ defmodule Gutenex do
   """
   def handle_cast({:font, :set, font_name}, [context, stream]) do
     stream = stream <> Font.set_font(context.fonts, font_name)
-    {:noreply, [context, stream]}
+    new_context = Context.set_current_font(context, font_name)
+    {:noreply, [new_context, stream]}
   end
 
   @doc """

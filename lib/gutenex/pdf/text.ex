@@ -17,8 +17,28 @@ defmodule Gutenex.PDF.Text do
     @break_text_marker
   end
 
+  #ACTUALLY we want to write out a stream
+  #of glyph IDs rather than raw text
   def write_text(text_to_write) do
     "(#{escape(text_to_write)}) Tj\n"
+  end
+
+  # reorder characters (Normalize?)
+  # Substitutions (GSUB)
+  # one-to-one
+  #   replace with glyphID, ToUnicode {newglyph:unicode}
+  # one-to-many
+  # many-to-one
+  # contextual
+  # Positioning
+  # kerning
+  # mark positioning (GPOS)
+  #
+  def hexstring(text) do
+    hex = text
+          |> :unicode.characters_to_binary(:unicode, :utf16)
+          |> Base.encode16
+    "<#{hex}> Tj\n"
   end
 
   def write_text_br(text_to_write) do

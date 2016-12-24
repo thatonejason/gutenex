@@ -18,6 +18,7 @@ defmodule Gutenex.PDF.Context do
     scripts: [],
     convert_mode: "utf8_to_latin2",
     current_page: 1,
+    current_font: %{},
     media_box: Page.page_size(:letter),
     generation_number: 0)
 
@@ -25,6 +26,12 @@ defmodule Gutenex.PDF.Context do
     %Gutenex.PDF.Context{
       context |
       fonts: Map.put(context.fonts, font_alias, font_def)
+   }
+  end
+  def set_current_font(context, font_alias) do
+    %Gutenex.PDF.Context{
+      context |
+      current_font: Map.get(context.fonts, font_alias)
    }
   end
 end
