@@ -47,7 +47,7 @@ defmodule GutenexFontTest do
       |> Gutenex.set_font("NotoSans", 32)
       |> Gutenex.text_render_mode(:fill)
       |> Gutenex.write_text_br("Noto Sans")
-      |> Gutenex.write_text_br("kern AWAY and ligature in\uFB04fflnity")
+      |> Gutenex.write_text_br("kern AWAY and ligature waffle wa\uFB04e")
       |> Gutenex.write_text("Japanese \u713C")
       |> Gutenex.end_text
       |> Gutenex.export("./tmp/embed.pdf")
