@@ -8,6 +8,7 @@ defmodule Gutenex.PDF.TrueType do
       :glyphWidths => [], :defaultWidth => 0,
       "SubType" => {:name, "Type0"}, :embed => nil,
       :cid2gid => %{}, 
+      :gid2cid => %{}, 
       :substitutions => nil,
       :positions => nil
     }
@@ -34,13 +35,12 @@ defmodule Gutenex.PDF.TrueType do
 
     glyphs
     |> handle_substitutions(ttf)
-    |> position_glyphs
+    |> position_glyphs(ttf)
     |> generate_pdf_instructions
   end
   defp handle_substitutions(glyphs, ttf) do
     # use data in GSUB to do any substitutions
     {subS, subF, subL} = ttf.substitutions
-    IO.puts "====LOOKUP latin GSUB features===="
     #TODO: pass in (or detect) script/lang combo
     #TODO: have a way to set active features
     # see spec for required, never disabled, and recommended
@@ -51,45 +51,36 @@ defmodule Gutenex.PDF.TrueType do
                |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {t, l} -> l end)
                |> List.flatten
                |> Enum.sort
-    #IO.inspect lookups  #[4]
-    # for each lookup, apply to each glyph in order
-    processed = Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), acc) end)
-    #processed = applyLookupGSUB(Enum.at(subL, 4), glyphs)
-
-    processed
+    # apply the lookups
+    Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), acc) end)
   end
+
   defp applyLookupGSUB({7, flag, offsets, table}, glyphs) do
-    IO.puts "GSUB extension"
     subtables = offsets 
             |> Enum.map(fn x -> 
             <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
             {lt, binary_part(table, x + off, byte_size(table) - (x + off))}
               end)
-    IO.inspect subtables
-    [{lt, tbl} | _] = subtables
     #for each subtable
-    #p = applyLookupGSUB({lt, flag, [], tbl}, glyphs)
-    p = Enum.reduce(subtables, glyphs, fn ({lt, tbl}, input) -> applyLookupGSUB({lt, flag, [], tbl}, input) end) 
-    p
+    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, [], tbl}, input) end) 
   end
   defp applyLookupGSUB({4, flag, offsets, table}, input) do
-    IO.puts "GSUB ligature"
-
     #parse ligature table
-    actualT = table
     <<1::16, covOff::16, nLigSets::16, lsl::binary-size(nLigSets)-unit(16), _::binary>> = table
     # ligature set tables
     ls = for << <<x::16>> <- lsl >>, do: x
-    IO.inspect ls
     # coverage table
-    # TODO: handle v2 table
-    <<1::16, nrecs::16, glyphs::binary-size(nrecs)-unit(16), rest::binary>> = binary_part(actualT, covOff, byte_size(actualT) - covOff)
-    coverage = for << <<x::16>> <- glyphs >>, do: x
+    coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
     # ligatures
-    ligaOff = Enum.map(ls, fn lsOffset -> parseLigatureSet(actualT, lsOffset) end)
-    IO.inspect ligaOff
-    o = applyLigature(coverage, ligaOff, input, []) 
-    o
+    ligaOff = Enum.map(ls, fn lsOffset -> parseLigatureSet(table, lsOffset) end)
+    applyLigature(coverage, ligaOff, input, []) 
+  end
+  # TODO: handle v2 table
+  defp parseCoverage(<<1::16, nrecs::16, glyphs::binary-size(nrecs)-unit(16), _::binary>>) do
+    for << <<x::16>> <- glyphs >>, do: x
+  end
+  defp parseCoverage(<<2::16, nrecs::16, ranges::binary-size(nrecs)-unit(48), _::binary>>) do
+    for << <<startg::16, endg::16, covindex::16>> <- ranges >>, do: {startg, endg, covindex}
   end
   defp parseLigatureSet(table, lsOffset) do
     <<nrecs::16, ligat::binary-size(nrecs)-unit(16), _::binary>> = binary_part(table, lsOffset, byte_size(table) - lsOffset)
@@ -125,25 +116,61 @@ defmodule Gutenex.PDF.TrueType do
     applyLigature(coverage, ligatures, glyphs, output)
   end
 
-  defp applyLookupGSUB({type, flag, offsets, table}, glyphs, output) do
+  #unhandled type; log and leave input untouched
+  defp applyLookupGSUB({type, flag, offsets, table}, glyphs) do
     IO.puts "Unknown GSUB lookup type #{type}"
     glyphs
   end
-  defp position_glyphs(glyphs) do
+  defp position_glyphs(glyphs, ttf) do
+    {scripts, features, lookups} = ttf.positions
     # initially just use glyph width as xadvance
     # if nothing applies we'll be set
     # use data in the GPOS and BASE table
     # to kern, position, and join
-    # locate script in GPOS scriptlist
-    # lookup LangSys table (or use DefaultLangSys)
-    # index into GPOS FeatureList table
-    # select features we want to apply
+    #
+    #TODO: pass in (or detect) script/lang combo
+    #TODO: have a way to set active features
     # see spec for required, never disabled, and recommended
+    active_features = ["liga", "dlig", "kern"]
     # each feature provides lookup indices
     # combine indices, apply in order given in LookupList table
     # for each lookup, apply to each glyph in order
+    indices = scripts["latn"][nil]
+               |> Enum.map(fn x -> Enum.at(features, x) end)
+               |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {t, l} -> l end)
+               |> List.flatten
+               |> Enum.sort
+    # apply the lookups
+    Enum.reduce(indices, glyphs, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
     #
     # no GPOS, that's fine, apply kern table if it exists
+    glyphs
+  end
+  # type 9 - extension
+  defp applyLookupGPOS({9, flag, offsets, table}, glyphs) do
+    IO.puts "GPOS extension"
+    subtables = offsets 
+            |> Enum.map(fn x -> 
+            <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
+            {lt, binary_part(table, x + off, byte_size(table) - (x + off))}
+              end)
+    #for each subtable
+    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, [], tbl}, input) end) 
+  end
+  defp applyLookupGPOS({2, flag, offsets, table}, glyphs) do
+    IO.puts "GPOS kern(2)"
+    <<fmt::16, covOff::16, record1::16, record2::16, rest::binary>> = table
+    # FMT 1
+    IO.puts "type #{fmt}"
+    <<nPairs::16, pairOff::binary-size(nPairs)-unit(16), _::binary>> = rest
+    # coverage table
+    coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
+    IO.inspect coverage
+    glyphs
+  end
+  #unhandled type; log and leave input untouched
+  defp applyLookupGPOS({type, flag, offsets, table}, glyphs) do
+    IO.puts "Unknown GPOS lookup type #{type}"
     glyphs
   end
   defp generate_pdf_instructions(glyphs) do
@@ -405,6 +432,7 @@ defmodule Gutenex.PDF.TrueType do
   end
   defp readNameRecords(recs, _data, 0), do: recs
   defp readNameRecords(recs, data, nRecs) do
+    #TODO: we only need to read our preferred platform/encoding
     <<platform::16, encoding::16, language::16, nameID::16, length::16, offset::16, remaining::binary>> = data
     r = %{platform: platform, encoding: encoding, lang: language, nameID: nameID, length: length, offset: offset}
     readNameRecords([r | recs], remaining, nRecs-1)
@@ -454,9 +482,9 @@ defmodule Gutenex.PDF.TrueType do
   defp extractCMap(ttf, data) do
     raw_cmap = rawTable(ttf, "cmap", data)
     # version, numTables
-    <<version::16, numtables::16, cmaptables::binary>> = raw_cmap
+    <<_version::16, numtables::16, cmaptables::binary>> = raw_cmap
     # read in tableoffsets (plat, enc, offset)
-    {cmapoffsets, cmapdata} = readCMapOffsets([], cmaptables, numtables)
+    {cmapoffsets, _cmapdata} = readCMapOffsets([], cmaptables, numtables)
     # IO.inspect cmapoffsets
     #we need the table's offset and length to find subtables
     {raw_off, raw_len} = lookupTable(ttf, "cmap")
@@ -464,9 +492,12 @@ defmodule Gutenex.PDF.TrueType do
     # next is 3.1, fmt 4 (standard MS unicode support)
     # 3.0 is a Windows symbol font
     # 1.0 is a Macintosh font
+    # TODO: if we have a preferred format, only need to parse that rather than all formats
     raw_cmaps = Enum.map(cmapoffsets, fn({plat, enc, off}) -> {plat, enc, binary_part(data, raw_off + off, raw_len - off)} end) 
     cid2gid = Enum.reduce(raw_cmaps, %{}, fn({plat, enc, raw_data}, acc) -> readCMapData(plat, enc, raw_data, acc) end) 
-    %{ttf | :cid2gid => cid2gid}
+    # reverse the lookup as naive ToUnicode map
+    gid2cid = Enum.map(cid2gid, fn ({k, v}) -> {v, k} end) |> Map.new
+    %{ttf | :cid2gid => cid2gid, :gid2cid => gid2cid}
   end
 
   # read in the platform, encoding, offset triplets
@@ -482,7 +513,7 @@ defmodule Gutenex.PDF.TrueType do
   # read CMap format 4 (5.2.1.3.3: Segment mapping to delta values)
   # this is the most useful one for the majority of modern fonts
   # used for Windows Unicode mappings (platform 3 encoding 1) for BMP
-  defp readCMapData(platform, encoding, <<4::16, length::16, lang::16, subdata::binary>>, cmap) do
+  defp readCMapData(_platform, _encoding, <<4::16, _length::16, _lang::16, subdata::binary>>, cmap) do
     <<doubleSegments::16,
     _searchRange::16,
     _entrySelector::16,
@@ -493,44 +524,42 @@ defmodule Gutenex.PDF.TrueType do
     # segment end values
     {endcodes, ecDone} = readSegmentData([], segments, segmentCount)
     #reserved::16
-    <<reserved::16, skipRes::binary>> = ecDone
+    <<_reserved::16, skipRes::binary>> = ecDone
     # segment start values
     {startcodes, startDone} = readSegmentData([], skipRes, segmentCount)
     # segment delta values
     {deltas, deltaDone} = readSignedSegmentData([], startDone, segmentCount)
     # segment range offset values
-    {offsets, glyphData} = readSegmentData([], deltaDone, segmentCount)
+    {offsets, _glyphData} = readSegmentData([], deltaDone, segmentCount)
     # combine the segment data we've read in
     segs = List.zip([startcodes, endcodes, deltas, offsets])
            |> Enum.reverse
     # generate the character-to-glyph map
     # TODO: also generate glyph-to-character map
-    charmap = segs
-              |> Enum.with_index
-              |> Enum.reduce(%{}, fn({x, index}, acc) -> mapSegment(x, acc, index, deltaDone) end)
-              |> Map.merge(cmap)
-    charmap
+    segs
+    |> Enum.with_index
+    |> Enum.reduce(%{}, fn({x, index}, acc) -> mapSegment(x, acc, index, deltaDone) end)
+    |> Map.merge(cmap)
   end
 
   # read CMap format 12 (5.2.1.3.7 Segmented coverage)
   # This is required by Windows fonts (Platform 3 encoding 10) that have UCS-4 characters
   # and is a SUPERSET of the data stored in format 4
-  defp readCMapData(platform, encoding, <<12::16, _::16, length::32, lang::32, groups::32, subdata::binary>>, cmap) do
-    charmap = readCMap12Entry([], subdata, groups)
-              |> Enum.reduce(%{}, fn({s,e,g}, acc) -> mapCMap12Entry(s,e,g,acc) end)
-              |> Map.merge(cmap)
-    charmap
+  defp readCMapData(_platform, _encoding, <<12::16, _::16, _length::32, _lang::32, groups::32, subdata::binary>>, cmap) do
+    readCMap12Entry([], subdata, groups)
+    |> Enum.reduce(%{}, fn({s,e,g}, acc) -> mapCMap12Entry(s,e,g,acc) end)
+    |> Map.merge(cmap)
   end
 
   #unknown formats we ignore for now
-  defp readCMapData(platform, encoding, <<fmt::16, subdata::binary>>, cmap) do
+  defp readCMapData(_platform, _encoding, <<_fmt::16, _subdata::binary>>, cmap) do
     #IO.inspect {"READ", fmt, platform, encoding}
     cmap
   end
   
   defp mapCMap12Entry(startcode, endcode, glyphindex, charmap) do
     offset = glyphindex-startcode
-    r = startcode..endcode
+    startcode..endcode
         |> Map.new(fn(x) -> {x, x + offset} end)
         |> Map.merge(charmap)
   end
@@ -582,9 +611,9 @@ defmodule Gutenex.PDF.TrueType do
   #returns script/language map, feature list, lookup tables
   defp extractOffHeader(table, ttf, data) do
     raw = rawTable(ttf, table, data)
-    <<versionMaj::16, versionMin::16, 
+    <<_versionMaj::16, _versionMin::16, 
     scriptListOff::16, featureListOff::16, 
-    lookupListOff::16, rest::binary>> = raw
+    lookupListOff::16, _::binary>> = raw
     #if 1.1, also featureVariations::u32
 
     lookupList = binary_part(raw, lookupListOff, byte_size(raw) - lookupListOff)
