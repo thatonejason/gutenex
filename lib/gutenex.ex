@@ -3,7 +3,6 @@ defmodule Gutenex do
   alias Gutenex.PDF
   alias Gutenex.PDF.Context
   alias Gutenex.PDF.Text
-  alias Gutenex.PDF.TrueType
   alias Gutenex.PDF.OpenTypeFont
   alias Gutenex.PDF.Font
 
