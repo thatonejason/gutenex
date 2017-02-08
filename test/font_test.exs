@@ -1,6 +1,7 @@
 defmodule GutenexFontTest do
   use ExUnit.Case
   alias Gutenex.PDF.TrueType, as: TrueType
+  alias Gutenex.PDF.OpenTypeFont
 
   test "parse Truetype font metrics" do
     ttf = TrueType.new
@@ -34,8 +35,11 @@ defmodule GutenexFontTest do
 
   test "embed font" do
     File.rm("./tmp/embed.pdf")
-    ttf = TrueType.new
-          |> TrueType.parse("./test/support/fonts/NotoSans-Italic.ttf")
+    #ttf = TrueType.new
+    #      |> TrueType.parse("./test/support/fonts/NotoSans-Bold.ttf")
+    {:ok, ttf} = OpenTypeFont.start_link
+    OpenTypeFont.parse(ttf, "./test/support/fonts/NotoSans-Bold.ttf")
+
     {:ok, pid} = Gutenex.start_link
     Gutenex.register_font(pid, "NotoSans", ttf)
       |> Gutenex.begin_text

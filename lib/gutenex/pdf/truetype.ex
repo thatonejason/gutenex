@@ -1,3 +1,36 @@
+defmodule Gutenex.PDF.OpenTypeFont do
+  use GenServer
+  alias Gutenex.PDF.TrueType
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, opts)
+  end
+  def init(:ok) do
+    {:ok, TrueType.new()}
+  end
+  def parse(pid, filename) do
+    GenServer.cast(pid, {:parse, filename})
+    pid
+  end
+  def layout(pid, text, size) do
+    GenServer.call(pid, {:layout, text, size})
+  end
+  def font_structure(pid) do
+    GenServer.call(pid, :ttf)
+  end
+
+  def handle_cast({:parse, filename}, ttf) do
+    parsed = TrueType.parse(ttf, filename)
+    {:noreply, parsed}
+  end
+  def handle_call(:ttf, _from, ttf) do
+    {:reply, ttf, ttf}
+  end
+  def handle_call({:layout, text, size}, _from, ttf) do
+    {:reply, TrueType.layout_text(ttf, text, size), ttf}
+  end
+end
+
 defmodule Gutenex.PDF.TrueType do
   use Bitwise, only_operators: true
   def new do
@@ -28,7 +61,7 @@ defmodule Gutenex.PDF.TrueType do
   # returns a list of glyphs
   # later we will want to apply
   # ligatures, kerning, etc
-  def layout_text(ttf, text) do
+  def layout_text(ttf, text, font_size) do
     glyphs = text
     |> String.to_charlist
     |> Enum.map(fn(cid) -> Map.get(ttf.cid2gid, cid, 0) end)
@@ -36,7 +69,7 @@ defmodule Gutenex.PDF.TrueType do
     glyphs
     |> handle_substitutions(ttf)
     |> position_glyphs(ttf)
-    |> generate_pdf_instructions
+    |> generate_pdf_instructions(ttf, font_size)
   end
   defp handle_substitutions(glyphs, ttf) do
     # use data in GSUB to do any substitutions
@@ -82,6 +115,18 @@ defmodule Gutenex.PDF.TrueType do
   defp parseCoverage(<<2::16, nrecs::16, ranges::binary-size(nrecs)-unit(48), _::binary>>) do
     for << <<startg::16, endg::16, covindex::16>> <- ranges >>, do: {startg, endg, covindex}
   end
+  defp findCoverageIndex(cov, g) when is_integer(hd(cov)) do
+    Enum.find_index(cov, fn i -> i == g end)
+  end
+  defp findCoverageIndex(cov, g) when is_tuple(hd(cov)) do
+    r = Enum.find(cov, fn {f,l,fi} -> f <= g and g <= l end)
+    if r != nil do
+      {s,_,i} = r
+      i + g - s
+    else
+      nil
+    end
+  end
   defp parseLigatureSet(table, lsOffset) do
     <<nrecs::16, ligat::binary-size(nrecs)-unit(16), _::binary>> = binary_part(table, lsOffset, byte_size(table) - lsOffset)
     ligaOff = for << <<x::16>> <- ligat >>, do: x
@@ -98,7 +143,7 @@ defmodule Gutenex.PDF.TrueType do
   defp applyLigature(coverage, ligatures, [], output), do: output
   defp applyLigature(coverage, ligatures, [g | glyphs], output) do
     # get the index of a ligature set that might apply
-    coverloc = Enum.find_index(coverage, fn i -> i == g end)
+    coverloc = findCoverageIndex(coverage, g)
     if coverloc != nil do
       # find first match in this ligature set (if any)
       lig = Enum.find(Enum.at(ligatures, coverloc), fn {replacement, match} -> Enum.take(glyphs, length(match)) == match end)
@@ -141,45 +186,145 @@ defmodule Gutenex.PDF.TrueType do
                |> List.flatten
                |> Enum.sort
     # apply the lookups
-    Enum.reduce(indices, glyphs, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
+    # TODO: set initial positioning details
+    Enum.reduce(indices, {glyphs, []}, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
     #
     # no GPOS, that's fine, apply kern table if it exists
-    glyphs
+    #{glyphs, pos}
   end
   # type 9 - extension
-  defp applyLookupGPOS({9, flag, offsets, table}, glyphs) do
-    IO.puts "GPOS extension"
+  defp applyLookupGPOS({9, flag, offsets, table}, {glyphs, pos}) do
+    #IO.puts "GPOS extension"
     subtables = offsets 
             |> Enum.map(fn x -> 
             <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
             {lt, binary_part(table, x + off, byte_size(table) - (x + off))}
               end)
     #for each subtable
-    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, [], tbl}, input) end) 
+    Enum.reduce(subtables, {glyphs, pos}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, [], tbl}, input) end) 
   end
-  defp applyLookupGPOS({2, flag, offsets, table}, glyphs) do
-    IO.puts "GPOS kern(2)"
+  # type 2 - pair positioning (ie, kerning)
+  defp applyLookupGPOS({2, flag, offsets, table}, {glyphs, _}) do
+    #IO.puts "GPOS kern(2)"
     <<fmt::16, covOff::16, record1::16, record2::16, rest::binary>> = table
-    # FMT 1
-    IO.puts "type #{fmt}"
+    # FMT 1 - identifies individual glyphs
+    IO.puts "kern table format #{fmt}"
+    # pair set table
     <<nPairs::16, pairOff::binary-size(nPairs)-unit(16), _::binary>> = rest
+    pairsetOffsets = for << <<x::16>> <- pairOff >>, do: x
     # coverage table
     coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
-    IO.inspect coverage
-    glyphs
+    # parse the pair sets
+    pairSets = Enum.map(pairsetOffsets, fn off -> parsePairSet(table, off, record1, record2) end)
+    positioning = applyKerning(coverage, pairSets, glyphs, [])
+    {glyphs, positioning}
+  end
+
+  defp applyKerning(coverage, pairSets, [], output), do: output
+  defp applyKerning(coverage, pairSets, [_], output), do: output ++ [nil]
+  defp applyKerning(coverage, pairSets, [g | glyphs], output) do
+    # get the index of a pair set that might apply
+    coverloc = findCoverageIndex(coverage, g)
+    if coverloc != nil do
+      pairSet = Enum.at(pairSets, coverloc)
+      nextChar = hd(glyphs)
+      pair = Enum.find(pairSet, fn {g, _, _} -> g == nextChar end)
+      if pair != nil do
+        {_, v1, v2} = pair
+        output = output ++ [v1]
+        IO.inspect {g, v1}
+        if v2 != nil do
+          glyphs = tl(glyphs)
+          output = output ++ [v2]
+        end
+      else
+        output = output ++ [nil]
+      end
+    else
+      output = output ++ [nil]
+    end
+    applyKerning(coverage, pairSets, glyphs, output)
+  end
+
+  defp parsePairSet(table, offset, fmtA, fmtB) do
+    sizeA = valueRecordSize(fmtA)
+    sizeB = valueRecordSize(fmtB)
+    data = binary_part(table, offset, byte_size(table) - offset)
+    # valueRecordSize returns size in bytes
+    pairSize = (2 + sizeA + sizeB)
+    <<nPairs::16, pairdata::binary>> = data
+    pairs = for << <<glyph::16, v1::binary-size(sizeA), v2::binary-size(sizeB)>> <- binary_part(pairdata, 0, pairSize * nPairs) >>, do: {glyph, v1, v2}
+    pairs = pairs
+      |> Enum.map(fn {g,v1,v2} -> {g, readPositioningValueRecord(fmtA, v1), readPositioningValueRecord(fmtB, v2)} end)
+    pairs
+  end
+  # ValueRecord in spec
+  defp readPositioningValueRecord(0, bytes), do: nil
+  defp readPositioningValueRecord(format, bytes) do
+    # format is bitset of fields to read for each records
+    {xPlace, xprest} = extractValueRecordVal(format &&& 0x0001, bytes)
+    {yPlace, yprest} = extractValueRecordVal(format &&& 0x0002, xprest)
+    {xAdv, xarest} = extractValueRecordVal(format &&& 0x0004, yprest)
+    {yAdv, _xyrest} = extractValueRecordVal(format &&& 0x0008, xarest)
+
+    #TODO: also offsets to device table
+
+    {xPlace, yPlace, xAdv, yAdv}
+  end
+  defp extractValueRecordVal(flag, ""), do: {0, ""}
+  defp extractValueRecordVal(flag, data) do
+    if flag do
+      <<x::signed-16, r::binary>> = data
+      {x, r}
+    else
+      {0, data}
+    end
+  end
+  defp valueRecordSize(format) do
+    flags = for << x::1 <- <<format>> >>, do: x
+    # record size is 2 bytes per set flag in the format spec
+    Enum.count(flags, fn x -> x == 1 end) * 2
   end
   #unhandled type; log and leave input untouched
   defp applyLookupGPOS({type, flag, offsets, table}, glyphs) do
     IO.puts "Unknown GPOS lookup type #{type}"
     glyphs
   end
-  defp generate_pdf_instructions(glyphs) do
+  defp generate_pdf_instructions({glyphs, positions}, ttf, font_size) do
+    pos_g = Enum.zip(glyphs, positions)
+            |> Enum.chunk_by(fn {_, p} -> p end)
+    new = pos_g
+          |>Enum.map_join(fn run ->
+            #{_, pos} = Enum.at(run, 0)
+            #if pos == nil do
+              #  hex = Enum.map_join(run, fn {g, nil} -> (Integer.to_string(g, 16) |> String.pad_leading(4, "0")) end)
+              #"<#{hex}> Tj "
+              #else
+              Enum.map_join(run, fn {g, pos} -> positioned_glyph(g, pos, ttf, font_size) end)
+              #end
+          end)
     # for now simply hex-encode as 16BE values
+    # Map.get(ttf.gw, g, ttf.defaultWidth)
     # once positioning included may need to interleave
     # glyph and positioning data
-    hex = glyphs
-          |> Enum.map_join(&(Integer.to_string(&1, 16) |> String.pad_leading(4, "0")))
-    "<#{hex}> Tj\n"
+    IO.inspect new
+    new <> "\n"
+  end
+
+  defp positioned_glyph(g, nil, ttf, font_size) do
+    advance = Enum.at(ttf.glyphWidths, g, ttf.defaultWidth)
+    scale = font_size / 1000
+    hex = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+    "<#{hex}> Tj #{advance * scale} 0 Td "
+  end
+  defp positioned_glyph(g, pos, ttf, font_size) do
+    advance = Enum.at(ttf.glyphWidths, g, ttf.defaultWidth)
+    {xp, yp, _, _} = pos
+    hex = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+    scale = font_size / 1000
+    #TODO: review - this looks suspect?
+    "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(advance + xp) * scale} 0 Td "
+    #"<#{hex}> Tj #{advance * scale} 0 Td "
   end
 
   defp markEmbeddedPart(ttf, data) do

@@ -1,6 +1,7 @@
 defmodule Gutenex.PDF.Builders.FontBuilder do
   alias Gutenex.PDF.Context
   alias Gutenex.PDF.RenderContext
+  alias Gutenex.PDF.OpenTypeFont
 
   # Builds each font object, adding the font objects and references to the
   # render context. Returns {render_context, context}
@@ -17,7 +18,8 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
   end
 
   # This handles embedding a Type0 composite font per the 1.7 spec
-  defp build_fonts(%RenderContext{}=render_context, [{font_alias, %{ "SubType" => {:name, "Type0"} }=ttf } | fonts]) do
+  defp build_fonts(%RenderContext{}=render_context, [{font_alias, pid } | fonts]) when is_pid(pid) do
+    ttf = OpenTypeFont.font_structure(pid)
     # add stream, add descriptor, add descfont, add tounicodemap, add font
     # font =  {:dict, font_definition}
     fo = RenderContext.current_object(render_context)
@@ -54,7 +56,6 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
       "CIDSystemInfo" => {:dict, %{"Ordering" => "Identity", "Registry" => "Adobe", "Supplement" => 0} },
       "FontDescriptor" => der,
       "DW" => ttf.defaultWidth,
-      # TODO: build this dynamically - this is blindly copied from sample PDF at the moment
       "W" => glyph_widths(ttf)
     }
     metrics = %{
