@@ -8,13 +8,20 @@ defmodule Gutenex.PDF.OpenTypeFont do
   def init(:ok) do
     {:ok, TrueType.new()}
   end
+
+  # read in and parse a TTF or OTF file
   def parse(pid, filename) do
     GenServer.cast(pid, {:parse, filename})
     pid
   end
+
+  # layout some text at a given size
+  # send back the glyphs and positioning data
   def layout(pid, text, size) do
     GenServer.call(pid, {:layout, text, size})
   end
+
+  # get the font structure (for additional analysis)
   def font_structure(pid) do
     GenServer.call(pid, :ttf)
   end
@@ -35,6 +42,7 @@ defmodule Gutenex.PDF.TrueType do
   use Bitwise, only_operators: true
   require Logger
 
+  # empty structure with sensible defaults
   def new do
     %{
       :version => 0, :tables => [], :name => nil, :bbox => [],
@@ -48,6 +56,10 @@ defmodule Gutenex.PDF.TrueType do
       :positions => nil
     }
   end
+  # entry point for parsing a file
+  # TODO: we should probably take raw data
+  # instead (or in addition to?) a filename
+  # see what Elixir best practice is
   def parse(ttf, filename) do
     f = File.open!(filename)
     data = IO.binread f, :all
@@ -60,28 +72,39 @@ defmodule Gutenex.PDF.TrueType do
     |> extractCMap(data)
     |> extractFeatures(data)
   end
-  # returns a list of glyphs
-  # later we will want to apply
-  # ligatures, kerning, etc
-  def layout_text(ttf, text, font_size) do
+  # returns a list of glyphs and positioning information
+  # TODO: move generate_pdf_instructions into correct PDF module
+  def layout_text(ttf, text, font_size, features \\ ["liga", "dlig", "kern"]) do
     glyphs = text
     |> String.to_charlist
     |> Enum.map(fn(cid) -> Map.get(ttf.cid2gid, cid, 0) end)
 
+    # see spec for required, never disabled, and recommended
+    # features
+    # TODO: have a way to set or detect these
+    script = "latn"
+    lang = nil
+    #DEBUG
+    features = features ++ ["aalt"]
+
     glyphs
-    |> handle_substitutions(ttf)
-    |> position_glyphs(ttf)
+    |> handle_substitutions(ttf, script, lang, features)
+    |> position_glyphs(ttf, script, lang, features)
     |> generate_pdf_instructions(ttf, font_size)
   end
-  defp handle_substitutions(glyphs, ttf) do
+  defp handle_substitutions(glyphs, ttf, script, lang, active_features) do
     # use data in GSUB to do any substitutions
     {subS, subF, subL} = ttf.substitutions
     #TODO: pass in (or detect) script/lang combo
     #TODO: have a way to set active features
     # see spec for required, never disabled, and recommended
-    active_features = ["liga", "dlig", "kern"]
+    #availFeatures = subS[script][lang]
+    #           |> Enum.map(fn x -> Enum.at(subF, x) end)
+    #           |> Enum.map(fn {tag, _} -> tag end)
+    #           |> Enum.uniq
+    #IO.inspect availFeatures
     # combine indices, apply in order given in LookupList table
-    lookups = subS["latn"][nil]
+    lookups = subS[script][lang]
                |> Enum.map(fn x -> Enum.at(subF, x) end)
                |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {_, l} -> l end)
                |> List.flatten
@@ -90,6 +113,7 @@ defmodule Gutenex.PDF.TrueType do
     Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), acc) end)
   end
 
+  # GSUB type 7 -- extended table
   defp applyLookupGSUB({7, flag, offsets, table}, glyphs) do
     subtables = offsets 
             |> Enum.map(fn x -> 
@@ -99,6 +123,8 @@ defmodule Gutenex.PDF.TrueType do
     #for each subtable
     Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, [], tbl}, input) end) 
   end
+
+  # GSUB type 4 -- ligature substition (single glyph replaces multiple glyphs)
   defp applyLookupGSUB({4, _flag, _offsets, table}, input) do
     #parse ligature table
     <<1::16, covOff::16, nLigSets::16, lsl::binary-size(nLigSets)-unit(16), _::binary>> = table
@@ -109,6 +135,45 @@ defmodule Gutenex.PDF.TrueType do
     # ligatures
     ligaOff = Enum.map(ls, fn lsOffset -> parseLigatureSet(table, lsOffset) end)
     applyLigature(coverage, ligaOff, input, []) 
+  end
+  # GSUB 1 -- single substitution
+  defp applyLookupGSUB({1, _flag, _offsets, table}, glyphs) do
+    <<format::16, covOff::16, rest::binary>> = table
+    coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
+    replace = case format do
+      1 ->
+        <<delta::16, _::binary>> = rest
+        fn g -> applySingleSub(g, coverage, delta) end
+      2 -> 
+        <<nGlyphs::16, ga::binary-size(nGlyphs)-unit(16), _::binary>> = rest
+        replacements = for << <<x::16>> <- ga >>, do: x
+        fn g -> applySingleSub(g, coverage, replacements) end
+      _ ->
+        Logger.debug "Unknown GSUB 1 subtable format #{format}"
+        fn g -> g end
+    end
+    Enum.map(glyphs, replace)
+  end
+  defp applyLookupGSUB({2, _flag, _offsets, _table}, glyphs) do
+    Logger.debug "GSUB 2 - multiple substitution"
+    glyphs
+  end
+  defp applyLookupGSUB({3, _flag, _offsets, table}, glyphs) do
+    Logger.debug "GSUB 3 - alternate substitution"
+    <<1::16, covOff::16, nAltSets::16, aoff::binary-size(nAltSets)-unit(16), _::binary>> = table
+    coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
+    # alternate set tables
+    altOffsets = for << <<x::16>> <- aoff >>, do: x
+    # nAlts::16, alts::binary-size(nAlts)-unit(16)
+    glyphs
+  end
+  defp applyLookupGSUB({5, _flag, _offsets, _table}, glyphs) do
+    Logger.debug "GSUB 5 - contextual substitution"
+    glyphs
+  end
+  defp applyLookupGSUB({6, _flag, _offsets, _table}, glyphs) do
+    Logger.debug "GSUB 6 - chaining substitution"
+    glyphs
   end
   #unhandled type; log and leave input untouched
   defp applyLookupGSUB({type, _flag, _offsets, _table}, glyphs) do
@@ -147,6 +212,14 @@ defmodule Gutenex.PDF.TrueType do
     end)
   end
 
+  defp applySingleSub(g, coverage, delta) when is_integer(delta) do
+    coverloc = findCoverageIndex(coverage, g)
+    if coverloc != nil, do: g + delta, else: g
+  end
+  defp applySingleSub(g, coverage, replacements) do
+    coverloc = findCoverageIndex(coverage, g)
+    if coverloc != nil, do: Enum.at(replacements, coverloc), else: g
+  end
   defp applyLigature(_coverage, _ligatures, [], output), do: output
   defp applyLigature(coverage, ligatures, [g | glyphs], output) do
     # get the index of a ligature set that might apply
@@ -168,7 +241,7 @@ defmodule Gutenex.PDF.TrueType do
     applyLigature(coverage, ligatures, glyphs, output)
   end
 
-  defp position_glyphs(glyphs, ttf) do
+  defp position_glyphs(glyphs, ttf, script, lang, active_features) do
     {scripts, features, lookups} = ttf.positions
     # initially just use glyph width as xadvance
     # if nothing applies we'll be set
@@ -176,13 +249,11 @@ defmodule Gutenex.PDF.TrueType do
     # to kern, position, and join
     #
     #TODO: pass in (or detect) script/lang combo
-    #TODO: have a way to set active features
-    # see spec for required, never disabled, and recommended
-    active_features = ["liga", "dlig", "kern"]
+
     # each feature provides lookup indices
     # combine indices, apply in order given in LookupList table
     # for each lookup, apply to each glyph in order
-    indices = scripts["latn"][nil]
+    indices = scripts[script][lang]
                |> Enum.map(fn x -> Enum.at(features, x) end)
                |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {_, l} -> l end)
                |> List.flatten
@@ -408,6 +479,8 @@ defmodule Gutenex.PDF.TrueType do
     <<_fmt::16, nRecords::16, strOffset::16, r::binary>> = raw
     #IO.puts "Name table format #{fmt}"
     recs = readNameRecords([], r, nRecords)
+    # TODO: pick best supported platform/encoding
+    # and just parse that one
     names = Enum.map(recs, fn(r)->recordToName(r, strOffset, raw) end)
     #prefer PS name
     name6 = case Enum.find(names, fn({id, _}) -> id == 6 end) do
@@ -514,7 +587,7 @@ defmodule Gutenex.PDF.TrueType do
 
       %{ttf | ascent: ascent, descent: descent, capHeight: capHeight, usWeightClass: usWeightClass}
     else
-      IO.puts "No OS/2 info, synthetic data"
+      Logger.debug "No OS/2 info, synthetic data"
       %{ttf | ascent: bbox[3], descent: bbox[1], capHeight: bbox[3], usWeightClass: 500}
     end
 
@@ -553,7 +626,7 @@ defmodule Gutenex.PDF.TrueType do
     fixed = if isFixedPitch > 0, do: flagFIXED, else: 0
 
     #TODO: figure out values of other flags (SERIF, etc)
-    # looks like PCLT has SerifStyle entry
+    # SERIF and SCRIPT can be derived from sFamilyClass in OS/2 table
     flags = flagSYMBOLIC ||| itals ||| forcebold ||| fixed
 
     #hhea
