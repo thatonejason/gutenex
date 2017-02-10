@@ -15,10 +15,10 @@ defmodule Gutenex.PDF.OpenTypeFont do
     pid
   end
 
-  # layout some text at a given size
+  # layout a run of text
   # send back the glyphs and positioning data
-  def layout(pid, text, size) do
-    GenServer.call(pid, {:layout, text, size})
+  def layout(pid, text) do
+    GenServer.call(pid, {:layout, text})
   end
 
   # get the font structure (for additional analysis)
@@ -33,8 +33,9 @@ defmodule Gutenex.PDF.OpenTypeFont do
   def handle_call(:ttf, _from, ttf) do
     {:reply, ttf, ttf}
   end
-  def handle_call({:layout, text, size}, _from, ttf) do
-    {:reply, TrueType.layout_text(ttf, text, size), ttf}
+  def handle_call({:layout, text}, _from, ttf) do
+    output = TrueType.layout_text(ttf, text)
+    {:reply, output, ttf}
   end
 end
 
@@ -56,6 +57,7 @@ defmodule Gutenex.PDF.TrueType do
       :positions => nil
     }
   end
+
   # entry point for parsing a file
   # TODO: we should probably take raw data
   # instead (or in addition to?) a filename
@@ -72,9 +74,9 @@ defmodule Gutenex.PDF.TrueType do
     |> extractCMap(data)
     |> extractFeatures(data)
   end
+
   # returns a list of glyphs and positioning information
-  # TODO: move generate_pdf_instructions into correct PDF module
-  def layout_text(ttf, text, font_size, features \\ ["liga", "kern"]) do
+  def layout_text(ttf, text, features \\ ["liga", "kern"]) do
     glyphs = text
     |> String.to_charlist
     |> Enum.map(fn(cid) -> Map.get(ttf.cid2gid, cid, 0) end)
@@ -83,7 +85,6 @@ defmodule Gutenex.PDF.TrueType do
     # features
     # TODO: have a way to set or detect these
     #TODO: pass in (or detect) script/lang combo
-    #TODO: have a way to set active features
     script = "latn"
     lang = nil
     #DEBUG
@@ -92,17 +93,17 @@ defmodule Gutenex.PDF.TrueType do
     glyphs
     |> handle_substitutions(ttf, script, lang, features)
     |> position_glyphs(ttf, script, lang, features)
-    |> generate_pdf_instructions(ttf, font_size)
   end
+
   defp handle_substitutions(glyphs, ttf, script, lang, active_features) do
     # use data in GSUB to do any substitutions
     {subS, subF, subL} = ttf.substitutions
     # see spec for required, never disabled, and recommended
-    availFeatures = subS[script][lang]
-               |> Enum.map(fn x -> Enum.at(subF, x) end)
-               |> Enum.map(fn {tag, _} -> tag end)
-               |> Enum.uniq
-    IO.inspect availFeatures
+    #availFeatures = subS[script][lang]
+    #           |> Enum.map(fn x -> Enum.at(subF, x) end)
+    #           |> Enum.map(fn {tag, _} -> tag end)
+    #           |> Enum.uniq
+    #IO.inspect availFeatures
     # combine indices, apply in order given in LookupList table
     lookups = subS[script][lang]
                |> Enum.map(fn x -> Enum.at(subF, x) end)
@@ -113,6 +114,12 @@ defmodule Gutenex.PDF.TrueType do
     Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), acc) end)
   end
 
+  # ==============================================
+    # GSUB glyph substitutions
+    # Used for ligatures, swashes, alternate forms
+    # if a lookup type is as-yet unsupported
+    # simply passes through the input
+  # ==============================================
   # GSUB 1 -- single substitution (one-for-one)
   defp applyLookupGSUB({1, _flag, table}, glyphs) do
     <<format::16, covOff::16, rest::binary>> = table
@@ -131,7 +138,7 @@ defmodule Gutenex.PDF.TrueType do
     end
     Enum.map(glyphs, replace)
   end
-
+  #GSUB 2 - multiple substitution (expand one glyph into several
   defp applyLookupGSUB({2, _flag, _table}, glyphs) do
     Logger.debug "GSUB 2 - multiple substitution"
     glyphs
@@ -180,7 +187,7 @@ defmodule Gutenex.PDF.TrueType do
             {lt, binary_part(table, x + off, byte_size(table) - (x + off))}
               end)
     #for each subtable
-    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, [], tbl}, input) end) 
+    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, input) end) 
   end
   defp applyLookupGSUB({type, flag, offsets, table}, glyphs) do
     #for each subtable
@@ -271,14 +278,17 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   defp position_glyphs(glyphs, ttf, script, lang, active_features) do
-    {scripts, features, lookups} = ttf.positions
     # initially just use glyph width as xadvance
-    # if nothing applies we'll be set
+    # this is sufficient if kerning information is missing
+    positions = glyphs
+                |> Enum.map(fn g -> Enum.at(ttf.glyphWidths, g, ttf.defaultWidth) end)
+                |> Enum.map(fn advance -> {0, 0, advance, 0} end)
+
+    #TODO: if no GPOS, fallback to kern table
+    #
     # use data in the GPOS and BASE table
     # to kern, position, and join
-    #
-    #TODO: pass in (or detect) script/lang combo
-
+    {scripts, features, lookups} = ttf.positions
     # each feature provides lookup indices
     # combine indices, apply in order given in LookupList table
     # for each lookup, apply to each glyph in order
@@ -288,32 +298,35 @@ defmodule Gutenex.PDF.TrueType do
                |> List.flatten
                |> Enum.sort
     # apply the lookups
-    # TODO: set initial positioning details
-    Enum.reduce(indices, {glyphs, []}, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
-    #
-    # no GPOS, that's fine, apply kern table if it exists
-    #{glyphs, pos}
+    Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
   end
-  # type 9 - extension
+
+  #add two positions together, treat nils as zeroed structure
+  defp addPos(p, nil), do: p
+  defp addPos({a,b,c,d}, {e,f,g,h}), do: {a+e, b+f, c+g, d+h}
+
+  # type 9 - when 32-bit offsets are used for subtables
   defp applyLookupGPOS({9, flag, offsets, table}, {glyphs, pos}) do
-    #IO.puts "GPOS extension"
     subtables = offsets 
             |> Enum.map(fn x -> 
-            <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
-            {lt, binary_part(table, x + off, byte_size(table) - (x + off))}
+            <<1::16, actual_type::16, off::32>> = binary_part(table, x, 8)
+            {actual_type, binary_part(table, x + off, byte_size(table) - (x + off))}
               end)
     #for each subtable
     Enum.reduce(subtables, {glyphs, pos}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, tbl}, input) end) 
   end
+
+  # all other types 
   defp applyLookupGPOS({type, flag, offsets, table}, {glyphs, pos}) do
     #for each subtable
     Enum.reduce(offsets, {glyphs, pos}, fn (offset, input) -> applyLookupGPOS({type, flag, binary_part(table, offset, byte_size(table) - offset)}, input) end) 
   end
+
   # type 2 - pair positioning (ie, kerning)
   defp applyLookupGPOS({2, _flag, table}, {glyphs, pos}) do
     #IO.puts "GPOS kern(2)"
     <<fmt::16, covOff::16, record1::16, record2::16, rest::binary>> = table
-    case fmt do
+    kerning = case fmt do
       1 ->
         # FMT 1 - identifies individual glyphs
         # pair set table
@@ -323,8 +336,7 @@ defmodule Gutenex.PDF.TrueType do
         coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
         # parse the pair sets
         pairSets = Enum.map(pairsetOffsets, fn off -> parsePairSet(table, off, record1, record2) end)
-        positioning = applyKerning(coverage, pairSets, glyphs, [])
-        {glyphs, positioning}
+        applyKerning(coverage, pairSets, glyphs, [])
       2 ->
         #FMT 2
         # offset to classdef, offset to classdef
@@ -355,8 +367,12 @@ defmodule Gutenex.PDF.TrueType do
         #classify both glyphs
         #get pairSet[c1][c2]
         #position
-        {glyphs, pos}
+
+        #temporary - produce no kerns
+        Enum.map(pos, fn _ -> nil end)
     end
+    positioning = Enum.zip(pos, kerning) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
+    {glyphs, positioning}
   end
   #unhandled type; log and leave input untouched
   defp applyLookupGPOS({type, _flag, _table}, {glyphs, pos}) do
@@ -413,9 +429,9 @@ defmodule Gutenex.PDF.TrueType do
     {yAdv, _xyrest} = extractValueRecordVal(format &&& 0x0008, xarest)
 
     #TODO: also offsets to device table
-
     {xPlace, yPlace, xAdv, yAdv}
   end
+
   defp extractValueRecordVal(_flag, ""), do: {0, ""}
   defp extractValueRecordVal(flag, data) do
     if flag do
@@ -425,46 +441,11 @@ defmodule Gutenex.PDF.TrueType do
       {0, data}
     end
   end
+
   defp valueRecordSize(format) do
     flags = for << x::1 <- <<format>> >>, do: x
     # record size is 2 bytes per set flag in the format spec
     Enum.count(flags, fn x -> x == 1 end) * 2
-  end
-  defp generate_pdf_instructions({glyphs, positions}, ttf, font_size) do
-    pos_g = Enum.zip(glyphs, positions)
-            |> Enum.chunk_by(fn {_, p} -> p end)
-    new = pos_g
-          |>Enum.map_join(fn run ->
-            #{_, pos} = Enum.at(run, 0)
-            #if pos == nil do
-              #  hex = Enum.map_join(run, fn {g, nil} -> (Integer.to_string(g, 16) |> String.pad_leading(4, "0")) end)
-              #"<#{hex}> Tj "
-              #else
-              Enum.map_join(run, fn {g, pos} -> positioned_glyph(g, pos, ttf, font_size) end)
-              #end
-          end)
-    # for now simply hex-encode as 16BE values
-    # Map.get(ttf.gw, g, ttf.defaultWidth)
-    # once positioning included may need to interleave
-    # glyph and positioning data
-    IO.inspect new
-    new <> "\n"
-  end
-
-  defp positioned_glyph(g, nil, ttf, font_size) do
-    advance = Enum.at(ttf.glyphWidths, g, ttf.defaultWidth)
-    scale = font_size / 1000
-    hex = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
-    "<#{hex}> Tj #{advance * scale} 0 Td "
-  end
-  defp positioned_glyph(g, pos, ttf, font_size) do
-    advance = Enum.at(ttf.glyphWidths, g, ttf.defaultWidth)
-    {xp, yp, _, _} = pos
-    hex = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
-    scale = font_size / 1000
-    #TODO: review - this looks suspect?
-    "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(advance + xp) * scale} 0 Td "
-    #"<#{hex}> Tj #{advance * scale} 0 Td "
   end
 
   defp markEmbeddedPart(ttf, data) do
@@ -905,7 +886,7 @@ defmodule Gutenex.PDF.TrueType do
     scriptListOff::16, featureListOff::16, 
     lookupListOff::16, _::binary>> = raw
     #if 1.1, also featureVariations::u32
-    Logger.debug "#{table} Header #{versionMaj}.#{versionMin}"
+    #Logger.debug "#{table} Header #{versionMaj}.#{versionMin}"
 
     lookupList = binary_part(raw, lookupListOff, byte_size(raw) - lookupListOff)
     <<nLookups::16, ll::binary-size(nLookups)-unit(16), _::binary>> = lookupList
@@ -968,9 +949,9 @@ defmodule Gutenex.PDF.TrueType do
   defp readLookupIndices(tag, offset, data) do
     lookup_part = binary_part(data, offset, byte_size(data) - offset)
     <<featureParamsOffset::16, nLookups::16, fx::binary-size(nLookups)-unit(16), _::binary>> = lookup_part
-    if featureParamsOffset != 0 do
-      Logger.debug "Feature #{tag} has feature params"
-    end
+    #if featureParamsOffset != 0 do
+      #  Logger.debug "Feature #{tag} has feature params"
+      #end
     indices = for << <<x::16>> <- fx >>, do: x
     {tag, indices}
   end

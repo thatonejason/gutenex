@@ -23,17 +23,6 @@ defmodule Gutenex.PDF.Text do
     "(#{escape(text_to_write)}) Tj\n"
   end
 
-  # reorder characters (Normalize?)
-  # Substitutions (GSUB)
-  # one-to-one
-  #   replace with glyphID, ToUnicode {newglyph:unicode}
-  # one-to-many
-  # many-to-one
-  # contextual
-  # Positioning
-  # kerning
-  # mark positioning (GPOS)
-  #
   def hexstring(text) do
     hex = text
           |> :unicode.characters_to_binary(:unicode, :utf16)
@@ -104,5 +93,22 @@ defmodule Gutenex.PDF.Text do
   # " operators. Initial value: 0. 
   def line_spacing(spacing) do
     "#{spacing} TL\n"
+  end
+
+  def write_positioned_glyphs({glyphs, positions}, font_size) do
+    pos_g = Enum.zip(glyphs, positions)
+            |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, font_size / 1000) end)
+    IO.inspect pos_g
+    pos_g <> "\n"
+  end
+
+  defp position_glyph(g, pos, scale) do
+    {xp, yp, xa, _} = pos
+    hex = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+    if xp == 0 and yp == 0 do
+      "<#{hex}> Tj #{xa * scale} 0 Td"
+    else
+      "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(xa + xp) * scale} 0 Td"
+    end
   end
 end
