@@ -54,7 +54,8 @@ defmodule Gutenex.PDF.TrueType do
       :cid2gid => %{}, 
       :gid2cid => %{}, 
       :substitutions => nil,
-      :positions => nil
+      :positions => nil,
+      :isCFF => false
     }
   end
 
@@ -111,7 +112,7 @@ defmodule Gutenex.PDF.TrueType do
                |> List.flatten
                |> Enum.sort
     # apply the lookups
-    Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), acc) end)
+    Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), subL, acc) end)
   end
 
   # ==============================================
@@ -121,7 +122,7 @@ defmodule Gutenex.PDF.TrueType do
     # simply passes through the input
   # ==============================================
   # GSUB 1 -- single substitution (one-for-one)
-  defp applyLookupGSUB({1, _flag, table}, glyphs) do
+  defp applyLookupGSUB({1, _flag, table}, _, glyphs) do
     <<format::16, covOff::16, rest::binary>> = table
     coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
     replace = case format do
@@ -139,12 +140,12 @@ defmodule Gutenex.PDF.TrueType do
     Enum.map(glyphs, replace)
   end
   #GSUB 2 - multiple substitution (expand one glyph into several
-  defp applyLookupGSUB({2, _flag, _table}, glyphs) do
+  defp applyLookupGSUB({2, _flag, _table}, _, glyphs) do
     Logger.debug "GSUB 2 - multiple substitution"
     glyphs
   end
-  # GSUB type 3 -- alternate substitution
-  defp applyLookupGSUB({3, _flag, _offsets, table}, glyphs) do
+  # GSUB type 3 -- alternate substitution (one-for-one)
+  defp applyLookupGSUB({3, _flag, _offsets, table}, _, glyphs) do
     <<1::16, covOff::16, nAltSets::16, aoff::binary-size(nAltSets)-unit(16), _::binary>> = table
     coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
     # alternate set tables
@@ -153,7 +154,7 @@ defmodule Gutenex.PDF.TrueType do
     Enum.map(glyphs, fn g -> applyRandomAlt(g, coverage, alts) end)
   end
   # GSUB type 4 -- ligature substition (single glyph replaces multiple glyphs)
-  defp applyLookupGSUB({4, _flag, table}, input) do
+  defp applyLookupGSUB({4, _flag, table}, _, input) do
     #parse ligature table
     <<1::16, covOff::16, nLigSets::16, lsl::binary-size(nLigSets)-unit(16), _::binary>> = table
     # ligature set tables
@@ -164,34 +165,58 @@ defmodule Gutenex.PDF.TrueType do
     ligaOff = Enum.map(ls, fn lsOffset -> parseLigatureSet(table, lsOffset) end)
     applyLigature(coverage, ligaOff, input, []) 
   end
-  defp applyLookupGSUB({5, _flag, _table}, glyphs) do
+  defp applyLookupGSUB({5, _flag, _table}, _, glyphs) do
     Logger.debug "GSUB 5 - contextual substitution"
     glyphs
   end
-  defp applyLookupGSUB({6, _flag, _table}, glyphs) do
-    Logger.debug "GSUB 6 - chaining substitution"
+  defp applyLookupGSUB({6, _flag, table}, lookups, glyphs) do
+    <<format::16, details::binary>> = table
+    output = case format do
+      3 ->
+        <<backtrackCount::16, backoff::binary-size(backtrackCount)-unit(16), 
+          inputCount::16, inputOff::binary-size(inputCount)-unit(16), 
+          lookaheadCount::16, lookaheadOff::binary-size(lookaheadCount)-unit(16), 
+          substCount::16, substRecs::binary-size(substCount)-unit(32), 
+          _::binary>> = details
+        backOffsets = for << <<x::16>> <- backoff >>, do: x
+        btCoverage = Enum.map(backOffsets, fn covOff -> parseCoverage(binary_part(table, covOff, byte_size(table) - covOff)) end)
+        inputOffsets = for << <<x::16>> <- inputOff >>, do: x
+        coverage = Enum.map(inputOffsets, fn covOff -> parseCoverage(binary_part(table, covOff, byte_size(table) - covOff)) end)
+        lookaheadOffsets = for << <<x::16>> <- lookaheadOff >>, do: x
+        laCoverage = Enum.map(lookaheadOffsets, fn covOff -> parseCoverage(binary_part(table, covOff, byte_size(table) - covOff)) end)
+        substRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
+        context = {btCoverage, coverage, laCoverage, substRecords}
+        applyChainingContextSub3(btCoverage, coverage, laCoverage, substRecords, lookups, glyphs, [])
+      _ ->
+        Logger.debug "GSUB 6 - chaining substitution format #{format}"
+        glyphs
+    end
+    output
+  end
+  defp applyLookupGSUB({8, _flag, _table}, _, glyphs) do
+    Logger.debug "GSUB 8 - reverse chaining substitution"
     glyphs
   end
   
   #unhandled type; log and leave input untouched
-  defp applyLookupGSUB({type, _flag, _table}, glyphs) do
+  defp applyLookupGSUB({type, _flag, _table}, _, glyphs) do
     Logger.debug "Unknown GSUB lookup type #{type}"
     glyphs
   end
 
   # GSUB type 7 -- extended table
-  defp applyLookupGSUB({7, flag, offsets, table}, glyphs) do
+  defp applyLookupGSUB({7, flag, offsets, table}, lookups, glyphs) do
     subtables = offsets 
             |> Enum.map(fn x -> 
             <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
             {lt, binary_part(table, x + off, byte_size(table) - (x + off))}
               end)
     #for each subtable
-    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, input) end) 
+    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, lookups, input) end) 
   end
-  defp applyLookupGSUB({type, flag, offsets, table}, glyphs) do
+  defp applyLookupGSUB({type, flag, offsets, table}, lookups, glyphs) do
     #for each subtable
-    Enum.reduce(offsets, glyphs, fn (offset, input) -> applyLookupGSUB({type, flag, binary_part(table, offset, byte_size(table) - offset)}, input) end) 
+    Enum.reduce(offsets, glyphs, fn (offset, input) -> applyLookupGSUB({type, flag, binary_part(table, offset, byte_size(table) - offset)}, lookups, input) end) 
   end
 
    
@@ -275,6 +300,63 @@ defmodule Gutenex.PDF.TrueType do
       {output ++ [g], glyphs}
     end
     applyLigature(coverage, ligatures, glyphs, output)
+  end
+
+  # handle coverage-based format for context chaining
+  defp applyChainingContextSub3(_btCoverage, _coverage, _laCoverage, _subst, _, [], output), do: output
+  defp applyChainingContextSub3(btCoverage, coverage, laCoverage, substRecords, lookups, [g | glyphs], output) do
+    backtrack = length(btCoverage)
+    inputExtra = length(coverage) - 1
+    lookahead = length(laCoverage)
+    #not enough backtracking or lookahead to even attempt match
+    oo = if length(output) < backtrack or length(glyphs) < lookahead + inputExtra do
+      [g]
+    else
+
+      #do we match the input
+      input = [g] ++ Enum.take(glyphs, inputExtra)
+      inputMatches = input 
+                     |> Enum.zip(coverage)
+                     |> Enum.all?(fn {g, cov} -> findCoverageIndex(cov, g) != nil end)
+
+      #do we match backtracking?
+      backMatches = if backtrack > 0 do
+        output 
+        |> Enum.reverse 
+        |> Enum.take(backtrack) 
+        |> Enum.zip(btCoverage)
+        |> Enum.all?(fn {g, cov} -> findCoverageIndex(cov, g) != nil end)
+      else
+        true
+      end
+
+      #do we match lookahead
+      laMatches = if lookahead > 0 do
+        glyphs
+        |> Enum.drop(inputExtra)
+        |> Enum.take(lookahead)
+        |> Enum.zip(laCoverage)
+        |> Enum.all?(fn {g, cov} -> findCoverageIndex(cov, g) != nil end)
+      else
+        true
+      end
+
+      if inputMatches and backMatches and laMatches do
+        replaced = substRecords
+        |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
+          candidate = Enum.at(acc, inputLoc)
+          lookup = Enum.at(lookups, lookupIndex)
+          [replacement | _] = applyLookupGSUB(lookup, lookups, [candidate])
+          List.replace_at(acc, inputLoc, replacement)
+        end)
+        replaced
+      else
+        [g]
+      end
+
+    end
+    output = output ++ oo
+    applyChainingContextSub3(btCoverage, coverage, laCoverage, substRecords, lookups, glyphs, output)
   end
 
   defp position_glyphs(glyphs, ttf, script, lang, active_features) do
@@ -449,9 +531,8 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   defp markEmbeddedPart(ttf, data) do
-    raw_cff = rawTable(ttf, "CFF ", data)
-    embedded = if raw_cff do
-      raw_cff
+    embedded = if ttf.isCFF do
+      rawTable(ttf, "CFF ", data)
     else
       data
     end
@@ -467,7 +548,8 @@ defmodule Gutenex.PDF.TrueType do
     _rangeShift ::16,
     remainder :: binary>> = data
     {tables, _} = readTables([], remainder, numTables)
-    %{ttf | :tables => tables}
+    isCFF = Enum.any?(tables, fn(x) -> x.name == "CFF " end)
+    %{ttf | :tables => tables, :isCFF => isCFF}
   end
   defp readHeader({%{version: 0x74727565}=ttf, data}, _full) do
     <<numTables::16, 
@@ -476,7 +558,8 @@ defmodule Gutenex.PDF.TrueType do
     _rangeShift :: size(16),
     remainder :: binary>> = data
     {tables, _} = readTables([], remainder, numTables)
-    %{ttf | :tables => tables}
+    isCFF = Enum.any?(tables, fn(x) -> x.name == "CFF " end)
+    %{ttf | :tables => tables, :isCFF => isCFF}
   end
   defp readHeader({%{version: 0x74727566}=ttf, data}, full_data) do
     #TODO: read in TTC header info, subfont 0
@@ -492,7 +575,8 @@ defmodule Gutenex.PDF.TrueType do
     remainder :: binary>> = subfont
     #IO.puts "Subfont 0 has #{numTables} tables"
     {tables, _} = readTables([], remainder, numTables)
-    %{ttf | :tables => tables}
+    isCFF = Enum.any?(tables, fn(x) -> x.name == "CFF " end)
+    %{ttf | :tables => tables, :isCFF => isCFF}
   end
   defp readHeader({%{version: 0x4F54544F}=ttf, data}, _) do
     <<numTables::16, 
@@ -502,7 +586,8 @@ defmodule Gutenex.PDF.TrueType do
     remainder :: binary>> = data
     #IO.puts "Has #{numTables} tables"
     {tables, _} = readTables([], remainder, numTables)
-    %{ttf | :tables => tables}
+    isCFF = Enum.any?(tables, fn(x) -> x.name == "CFF " end)
+    %{ttf | :tables => tables, :isCFF => isCFF}
   end
   defp readHeader({ttf, _data}, _) do
     #IO.puts "TODO: unknown TTF version"
@@ -886,7 +971,9 @@ defmodule Gutenex.PDF.TrueType do
     scriptListOff::16, featureListOff::16, 
     lookupListOff::16, _::binary>> = raw
     #if 1.1, also featureVariations::u32
-    #Logger.debug "#{table} Header #{versionMaj}.#{versionMin}"
+    if {versionMaj, versionMin} != {1, 0} do
+      Logger.debug "#{table} Header #{versionMaj}.#{versionMin}"
+    end
 
     lookupList = binary_part(raw, lookupListOff, byte_size(raw) - lookupListOff)
     <<nLookups::16, ll::binary-size(nLookups)-unit(16), _::binary>> = lookupList

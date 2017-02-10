@@ -20,6 +20,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
   # This handles embedding a Type0 composite font per the 1.7 spec
   defp build_fonts(%RenderContext{}=render_context, [{font_alias, pid } | fonts]) when is_pid(pid) do
     ttf = OpenTypeFont.font_structure(pid)
+    IO.puts "Font #{ttf.name} is #{ttf.isCFF}"
     # add stream, add descriptor, add descfont, add tounicodemap, add font
     # font =  {:dict, font_definition}
     fo = RenderContext.current_object(render_context)
@@ -49,15 +50,17 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
       "DescendantFonts" => {:array, [cidr]},
       "ToUnicode" => cmapr
     }
+    subtype = if ttf.isCFF, do: "CIDFontType0", else: "CIDFontType2"
     cid_font = %{
       "Type" => {:name, "Font"},
-      "Subtype" => {:name, "CIDFontType0"},
+      "Subtype" => {:name, subtype},
       "BaseFont" => {:name, ttf.name},
       "CIDSystemInfo" => {:dict, %{"Ordering" => "Identity", "Registry" => "Adobe", "Supplement" => 0} },
       "FontDescriptor" => der,
       "DW" => ttf.defaultWidth,
       "W" => glyph_widths(ttf)
     }
+    ffkey = if ttf.isCFF, do: "FontFile3", else: "FontFile3"
     metrics = %{
       "Type" => {:name, "FontDescriptor"},
       "FontName" => {:name, ttf.name},
@@ -69,7 +72,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
       "Descent" => ttf.descent,
       "CapHeight" => ttf.capHeight,
       "StemV" => ttf.stemV,
-      "FontFile3" => er  #TODO: handle different composite types
+      ffkey => er
     }
 
     z = :zlib.open()
@@ -78,7 +81,8 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     compressed = IO.iodata_to_binary(zout)
     :zlib.close(z)
 
-    embed_bytes = {:stream, {:dict, %{"Subtype" => {:name, "CIDFontType0C"}, "Length" => byte_size(compressed), "Filter" => {:name, "FlateDecode"}}}, compressed}
+    embed_subtype = "CIDFontType0C"
+    embed_bytes = {:stream, {:dict, %{"Subtype" => {:name, embed_subtype}, "Length" => byte_size(compressed), "Filter" => {:name, "FlateDecode"}}}, compressed}
 
     rc = %RenderContext{RenderContext.next_index(cmapc) |
      font_aliases: Map.put(ec.font_aliases, font_alias, fr),
