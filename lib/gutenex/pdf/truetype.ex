@@ -532,7 +532,8 @@ defmodule Gutenex.PDF.TrueType do
 
   defp markEmbeddedPart(ttf, data) do
     embedded = if ttf.isCFF do
-      rawTable(ttf, "CFF ", data)
+      #rawTable(ttf, "CFF ", data)
+      data
     else
       data
     end
