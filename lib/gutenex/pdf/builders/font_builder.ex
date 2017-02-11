@@ -60,7 +60,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
       "DW" => ttf.defaultWidth,
       "W" => glyph_widths(ttf)
     }
-    ffkey = if ttf.isCFF, do: "FontFile3", else: "FontFile3"
+    ffkey = if ttf.isCFF, do: "FontFile3", else: "FontFile2"
     metrics = %{
       "Type" => {:name, "FontDescriptor"},
       "FontName" => {:name, ttf.name},
@@ -91,7 +91,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
        { cido, {:dict, cid_font} },
        { deo, {:dict, metrics} },
        { eo, embed_bytes },
-       { cmapo, identity_tounicode_cmap() }
+       { cmapo, identity_tounicode_cmap(ttf) }
        | ec.font_objects
      ]
     }
@@ -163,7 +163,47 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     {[{lastgid, [lw]} | [{s, e, w} | tail]], gid, width}
   end
 
-  defp identity_tounicode_cmap() do
+  def addR(n, []) do
+    [[n]]
+  end
+  def addR(n, ranges) do
+    range = List.last(ranges)
+    if List.last(range) + 1 == n do
+      List.replace_at(ranges, -1, range ++ [n])
+    else
+      ranges ++ [[n]]
+    end
+
+  end
+  defp hexify(g), do: Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+  defp identity_tounicode_cmap(ttf) do
+
+    keys = Map.keys(ttf.gid2cid)
+             |> Enum.sort
+             |> Enum.reduce([], &addR/2)
+    ranges = keys
+    |> Enum.filter(fn x -> length(x) > 1 end)
+    |> Enum.map(fn x -> {List.first(x), List.last(x)} end)
+    |> Enum.map(fn {first, last} ->
+      cids = first..last
+             |> Enum.map(fn n -> Map.get(ttf.gid2cid, n) |> hexify end)
+             |> Enum.map_join(" ", fn s -> "<#{s}>" end)
+      "<#{hexify(first)}> <#{hexify(last)}> [#{cids}]\n"
+    end)
+    singles = keys
+              |> Enum.filter(fn x -> length(x) == 1 end)
+              |> Enum.map(&hd/1)
+              |> Enum.map(fn x -> {hexify(x), Map.get(ttf.gid2cid, x) |> hexify} end)
+              |> Enum.map(fn {k, s} -> "<#{k}> <#{s}>\n" end)
+    charblock = if length(singles) > 0 do
+      """
+      #{length(singles)} beginbfchar
+      #{Enum.join(singles)}
+      endbfchar
+      """
+    else
+      ""
+    end
     {:stream, """
 /CIDInit /ProcSet findresource begin
 12 dict begin
@@ -178,13 +218,10 @@ begincmap
 1 begincodespacerange
 <0000> <FFFF>
 endcodespacerange
-2 beginbfrange
-<0000> <005E> <0020>
-<005F> <0061> [<00660066> <00660069> <00660066006C>]
+#{length(ranges)} beginbfrange
+#{Enum.join(ranges)}
 endbfrange
-1 beginbfchar
-<3A51> <D840DC3E>
-endbfchar
+#{charblock}
 endcmap
 CMapName currentdict /CMap defineresource pop
 end

@@ -46,17 +46,24 @@ defmodule GutenexFontTest do
     assert glyphs == [603]
   end
 
+  test "Apply OpenType substitutions (GSUB) - exercise chained" do
+    ttf = TrueType.new
+          |> TrueType.parse("./test/support/fonts/SourceSansPro-Regular.otf")
+    {glyphs, _} = TrueType.layout_text(ttf, "1/2", ["liga", "frac"])
+    assert glyphs == [1617, 1726, 1604]
+  end
+
   @tag :integration
   test "embed font" do
     File.rm("./tmp/embed.pdf")
     {:ok, ttf} = OpenTypeFont.start_link
     OpenTypeFont.parse(ttf, "./test/support/fonts/NotoSans-Italic.ttf")
-    #{:ok, ssp} = OpenTypeFont.start_link
-    #OpenTypeFont.parse(ssp, "./test/support/fonts/SourceSansPro-Regular.otf")
+    {:ok, ssp} = OpenTypeFont.start_link
+    OpenTypeFont.parse(ssp, "./test/support/fonts/SourceSansPro-Regular.otf")
 
     {:ok, pid} = Gutenex.start_link
     Gutenex.register_font(pid, "NotoSans", ttf)
-      #|> Gutenex.register_font("SourceSansPro", ssp)
+    #     |> Gutenex.register_font("SourceSansPro", ssp)
       |> Gutenex.begin_text
       |> Gutenex.text_leading(48)
       |> Gutenex.set_font("Helvetica", 48)
@@ -66,7 +73,7 @@ defmodule GutenexFontTest do
       |> Gutenex.set_font("NotoSans", 32)
       |> Gutenex.text_render_mode(:fill)
       |> Gutenex.write_text_br("Noto Sans")
-      #|> Gutenex.set_font("SourceSansPro", 32)
+#|> Gutenex.set_font("SourceSansPro", 32)
       |> Gutenex.write_text_br("kern AWAY difficult waffle 1/2")
       |> Gutenex.write_text_br("Japanese \u713C")
       |> Gutenex.end_text

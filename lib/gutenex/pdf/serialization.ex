@@ -25,7 +25,8 @@ defmodule Gutenex.PDF.Serialization do
   end
 
   def serialize(float) when is_float(float) do
-    Float.to_string(float, [decimals: 2])
+    #Float.to_string(float, [decimals: 2])
+    :erlang.float_to_binary(float, [decimals: 2])
   end
 
   def serialize(integer) when is_integer(integer) do
