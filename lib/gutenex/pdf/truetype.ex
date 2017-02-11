@@ -55,7 +55,7 @@ defmodule Gutenex.PDF.TrueType do
       :gid2cid => %{}, 
       :substitutions => nil,
       :positions => nil,
-      :isCFF => false
+      :isCFF => false, :familyClass => 0
     }
   end
 
@@ -718,7 +718,7 @@ defmodule Gutenex.PDF.TrueType do
       # for osver > 4 also fields:
       # lowerOpticalPointSize::16, upperOpticalPointSize::16
 
-      %{ttf | ascent: ascent, descent: descent, capHeight: capHeight, usWeightClass: usWeightClass}
+      %{ttf | ascent: ascent, descent: descent, capHeight: capHeight, usWeightClass: usWeightClass, familyClass: familyClass}
     else
       Logger.debug "No OS/2 info, synthetic data"
       %{ttf | ascent: bbox[3], descent: bbox[1], capHeight: bbox[3], usWeightClass: 500}
