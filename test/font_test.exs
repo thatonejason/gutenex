@@ -39,14 +39,14 @@ defmodule GutenexFontTest do
     assert glyphs == [36 , 37 ,38]
   end
 
-  test "Apply OpenType substitutions (GSUB)" do
+  test "Apply OpenType substitutions (GSUB 4) - exercise ligature" do
     ttf = TrueType.new
           |> TrueType.parse("./test/support/fonts/NotoSans-Bold.ttf")
     {glyphs, _} = TrueType.layout_text(ttf, "ffl", ["liga"])
     assert glyphs == [603]
   end
 
-  test "Apply OpenType substitutions (GSUB) - exercise chained" do
+  test "Apply OpenType substitutions (GSUB 6) - exercise chained" do
     ttf = TrueType.new
           |> TrueType.parse("./test/support/fonts/SourceSansPro-Regular.otf")
     {glyphs, _} = TrueType.layout_text(ttf, "1/2", ["liga", "frac"])
