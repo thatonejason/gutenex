@@ -108,7 +108,7 @@ defmodule Gutenex.PDF.Text do
     if xp == 0 and yp == 0 do
       "<#{hex}> Tj #{xa * scale} 0 Td"
     else
-      "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(xa + xp) * scale} 0 Td"
+      "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(xa - xp) * scale} 0 Td"
     end
   end
 end

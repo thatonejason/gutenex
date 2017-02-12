@@ -51,8 +51,8 @@ defmodule Gutenex.PDF.TrueType do
       :usWeightClass => 500, :stemV => 0, :italicAngle => 0, :flags => 0,
       :glyphWidths => [], :defaultWidth => 0,
       "SubType" => {:name, "Type0"}, :embed => nil,
-      :cid2gid => %{}, 
-      :gid2cid => %{}, 
+      :cid2gid => %{},
+      :gid2cid => %{},
       :substitutions => nil,
       :positions => nil,
       :isCFF => false, :familyClass => 0
@@ -129,7 +129,7 @@ defmodule Gutenex.PDF.TrueType do
       1 ->
         <<delta::16, _::binary>> = rest
         fn g -> applySingleSub(g, coverage, delta) end
-      2 -> 
+      2 ->
         <<nGlyphs::16, ga::binary-size(nGlyphs)-unit(16), _::binary>> = rest
         replacements = for << <<x::16>> <- ga >>, do: x
         fn g -> applySingleSub(g, coverage, replacements) end
@@ -163,7 +163,7 @@ defmodule Gutenex.PDF.TrueType do
     coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
     # ligatures
     ligaOff = Enum.map(ls, fn lsOffset -> parseLigatureSet(table, lsOffset) end)
-    applyLigature(coverage, ligaOff, input, []) 
+    applyLigature(coverage, ligaOff, input, [])
   end
   defp applyLookupGSUB({5, _flag, _table}, _, glyphs) do
     Logger.debug "GSUB 5 - contextual substitution"
@@ -173,10 +173,10 @@ defmodule Gutenex.PDF.TrueType do
     <<format::16, details::binary>> = table
     output = case format do
       3 ->
-        <<backtrackCount::16, backoff::binary-size(backtrackCount)-unit(16), 
-          inputCount::16, inputOff::binary-size(inputCount)-unit(16), 
-          lookaheadCount::16, lookaheadOff::binary-size(lookaheadCount)-unit(16), 
-          substCount::16, substRecs::binary-size(substCount)-unit(32), 
+        <<backtrackCount::16, backoff::binary-size(backtrackCount)-unit(16),
+          inputCount::16, inputOff::binary-size(inputCount)-unit(16),
+          lookaheadCount::16, lookaheadOff::binary-size(lookaheadCount)-unit(16),
+          substCount::16, substRecs::binary-size(substCount)-unit(32),
           _::binary>> = details
         backOffsets = for << <<x::16>> <- backoff >>, do: x
         btCoverage = Enum.map(backOffsets, fn covOff -> parseCoverage(binary_part(table, covOff, byte_size(table) - covOff)) end)
@@ -197,7 +197,7 @@ defmodule Gutenex.PDF.TrueType do
     Logger.debug "GSUB 8 - reverse chaining substitution"
     glyphs
   end
-  
+
   #unhandled type; log and leave input untouched
   defp applyLookupGSUB({type, _flag, _table}, _, glyphs) do
     Logger.debug "Unknown GSUB lookup type #{type}"
@@ -206,20 +206,19 @@ defmodule Gutenex.PDF.TrueType do
 
   # GSUB type 7 -- extended table
   defp applyLookupGSUB({7, flag, offsets, table}, lookups, glyphs) do
-    subtables = offsets 
-            |> Enum.map(fn x -> 
+    subtables = offsets
+            |> Enum.map(fn x ->
             <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
             {lt, binary_part(table, x + off, byte_size(table) - (x + off))}
               end)
     #for each subtable
-    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, lookups, input) end) 
+    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, lookups, input) end)
   end
   defp applyLookupGSUB({type, flag, offsets, table}, lookups, glyphs) do
     #for each subtable
-    Enum.reduce(offsets, glyphs, fn (offset, input) -> applyLookupGSUB({type, flag, binary_part(table, offset, byte_size(table) - offset)}, lookups, input) end) 
+    Enum.reduce(offsets, glyphs, fn (offset, input) -> applyLookupGSUB({type, flag, binary_part(table, offset, byte_size(table) - offset)}, lookups, input) end)
   end
 
-   
   # parse coverage tables
   defp parseCoverage(<<1::16, nrecs::16, glyphs::binary-size(nrecs)-unit(16), _::binary>>) do
     for << <<x::16>> <- glyphs >>, do: x
@@ -257,7 +256,7 @@ defmodule Gutenex.PDF.TrueType do
     ligaOff
     |> Enum.map(fn x -> binary_part(table, lsOffset + x, byte_size(table) - (lsOffset + x)) end)
     |> Enum.map(fn <<g::16, nComps::16, rest::binary>> ->  {g, nComps-1, rest} end)
-    |> Enum.map(fn {g, n, data} -> 
+    |> Enum.map(fn {g, n, data} ->
       <<recs::binary-size(n)-unit(16), _::binary>> = data
       gg = for << <<x::16>> <- recs >>, do: x
       {g, gg}
@@ -274,7 +273,7 @@ defmodule Gutenex.PDF.TrueType do
   end
   defp applyRandomAlt(g, coverage, alts) do
     coverloc = findCoverageIndex(coverage, g)
-    if coverloc != nil do 
+    if coverloc != nil do
       candidates = Enum.at(alts, coverloc)
       Enum.random(candidates)
     else
@@ -315,15 +314,15 @@ defmodule Gutenex.PDF.TrueType do
 
       #do we match the input
       input = [g] ++ Enum.take(glyphs, inputExtra)
-      inputMatches = input 
+      inputMatches = input
                      |> Enum.zip(coverage)
                      |> Enum.all?(fn {g, cov} -> findCoverageIndex(cov, g) != nil end)
 
       #do we match backtracking?
       backMatches = if backtrack > 0 do
-        output 
-        |> Enum.reverse 
-        |> Enum.take(backtrack) 
+        output
+        |> Enum.reverse
+        |> Enum.take(backtrack)
         |> Enum.zip(btCoverage)
         |> Enum.all?(fn {g, cov} -> findCoverageIndex(cov, g) != nil end)
       else
@@ -389,19 +388,19 @@ defmodule Gutenex.PDF.TrueType do
 
   # type 9 - when 32-bit offsets are used for subtables
   defp applyLookupGPOS({9, flag, offsets, table}, {glyphs, pos}) do
-    subtables = offsets 
-            |> Enum.map(fn x -> 
+    subtables = offsets
+            |> Enum.map(fn x ->
             <<1::16, actual_type::16, off::32>> = binary_part(table, x, 8)
             {actual_type, binary_part(table, x + off, byte_size(table) - (x + off))}
               end)
     #for each subtable
-    Enum.reduce(subtables, {glyphs, pos}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, tbl}, input) end) 
+    Enum.reduce(subtables, {glyphs, pos}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, tbl}, input) end)
   end
 
-  # all other types 
+  # all other types
   defp applyLookupGPOS({type, flag, offsets, table}, {glyphs, pos}) do
     #for each subtable
-    Enum.reduce(offsets, {glyphs, pos}, fn (offset, input) -> applyLookupGPOS({type, flag, binary_part(table, offset, byte_size(table) - offset)}, input) end) 
+    Enum.reduce(offsets, {glyphs, pos}, fn (offset, input) -> applyLookupGPOS({type, flag, binary_part(table, offset, byte_size(table) - offset)}, input) end)
   end
 
   # type 2 - pair positioning (ie, kerning)
@@ -428,6 +427,8 @@ defmodule Gutenex.PDF.TrueType do
         #IO.puts "Class1 #{nClass1Records} Class2 #{nClass2Records}"
 
         #read in the class definitions
+        class1 = parseGlyphClass(binary_part(table, class1Off, byte_size(table) - class1Off))
+        class2 = parseGlyphClass(binary_part(table, class2Off, byte_size(table) - class2Off))
         # fmt==1, startglyph, nglyphs, array of ints (each int is a class)
         # fmt==2, nRanges, {startGlyph, endGlyph, class}
 
@@ -439,7 +440,7 @@ defmodule Gutenex.PDF.TrueType do
         c1recs = binary_part(records, 0, nClass1Records * class1size)
         c1Recs = for << <<c2recs::binary-size(class1size)>> <- c1recs >>, do: c2recs
         pairSets = Enum.map(c1Recs, fn c2recs ->
-          c2Recs = for << <<c2Rec::binary-size(class2size)>> <- c2recs>>, do: c2Rec 
+          c2Recs = for << <<c2Rec::binary-size(class2size)>> <- c2recs>>, do: c2Rec
           c2Recs
           |> Enum.map(fn c2Rec -> for << <<v1::binary-size(sizeA), v2::binary-size(sizeB)>> <- c2Rec >>, do: {v1, v2} end)
           |> Enum.map(fn [{v1, v2}] -> {readPositioningValueRecord(record1, v1), readPositioningValueRecord(record2, v2)} end)
@@ -449,17 +450,58 @@ defmodule Gutenex.PDF.TrueType do
         #classify both glyphs
         #get pairSet[c1][c2]
         #position
+        applyKerning2(class1, class2, pairSets, glyphs, [])
 
         #temporary - produce no kerns
-        Enum.map(pos, fn _ -> nil end)
+        #Enum.map(pos, fn _ -> nil end)
     end
     positioning = Enum.zip(pos, kerning) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    {glyphs, positioning}
+    #{glyphs, positioning}
+    {glyphs, pos}
   end
   #unhandled type; log and leave input untouched
   defp applyLookupGPOS({type, _flag, _table}, {glyphs, pos}) do
-    IO.puts "Unknown GPOS lookup type #{type}"
+    Logger.debug "Unknown GPOS lookup type #{type}"
     {glyphs, pos}
+  end
+
+  defp parseGlyphClass(<<1::16, start::16, nGlyphs::16, classes::binary-size(nGlyphs)-unit(16), _::binary>>) do
+    IO.puts "classDef type 1 with #{nGlyphs} glyphs"
+  end
+  defp parseGlyphClass(<<2::16, nRanges::16, ranges::binary-size(nRanges)-unit(48), _::binary>>) do
+    ranges = for << <<first::16, last::16, class::16>> <- ranges >>, do: {first, last, class}
+    ranges
+  end
+  defp classifyGlyph(g, ranges) do
+    r = Enum.find(ranges, fn {f,l,_} -> f <= g and g <= l end)
+    # if no match, class 0
+    if r == nil do
+      0
+    else
+      {_,_,class} = r
+      class
+    end
+  end
+
+  defp applyKerning2(_classDef1, _clasDef2, _pairSets, [], output), do: output
+  defp applyKerning2(_classDef1, _clasDef2, _pairSets, [_], output), do: output ++ [nil]
+  defp applyKerning2(classDef1, classDef2, pairsets, [g1, g2 | glyphs], output) do
+    c1 = classifyGlyph(g1, classDef1)
+    c2 = classifyGlyph(g2, classDef2)
+    pair = pairsets |> Enum.at(c1) |> Enum.at(c2)
+    if pair != nil do
+      {v1, v2} = pair
+      oo = output ++ [v1]
+      IO.inspect {g1, v1}
+      {output, glyphs} = if v2 != nil do
+        {oo ++ [v2], glyphs}
+      else
+        {oo, [g2 | glyphs]}
+      end
+    else
+      {output ++ [nil], [g2 | glyphs]}
+    end
+    applyKerning2(classDef1, classDef1, pairsets, glyphs, output)
   end
 
   defp applyKerning(_coverage, _pairSets, [], output), do: output
@@ -474,7 +516,6 @@ defmodule Gutenex.PDF.TrueType do
       if pair != nil do
         {_, v1, v2} = pair
         oo = output ++ [v1]
-        IO.inspect {g, v1}
         if v2 != nil do
           {oo ++ [v2], tl(glyphs)}
         else
@@ -543,7 +584,7 @@ defmodule Gutenex.PDF.TrueType do
     {%{ttf | :version => version}, data}
   end
   defp readHeader({%{version: 0x00010000}=ttf, data}, _full) do
-    <<numTables::16, 
+    <<numTables::16,
     _searchRange::16,
     _entrySelector ::16,
     _rangeShift ::16,
@@ -553,7 +594,7 @@ defmodule Gutenex.PDF.TrueType do
     %{ttf | :tables => tables, :isCFF => isCFF}
   end
   defp readHeader({%{version: 0x74727565}=ttf, data}, _full) do
-    <<numTables::16, 
+    <<numTables::16,
     _searchRange::16,
     _entrySelector :: size(16),
     _rangeShift :: size(16),
@@ -568,8 +609,8 @@ defmodule Gutenex.PDF.TrueType do
     numSubfonts::32, rem::binary>> = data
     #read in 32-bit subfont offsets
     {offsets, _remaining} = readOffset([], rem, numSubfonts)
-    subfont = binary_part(full_data, offsets[0], byte_size(full_data)-offsets[0]) 
-    <<_ttfVersion::32, numTables::16, 
+    subfont = binary_part(full_data, offsets[0], byte_size(full_data)-offsets[0])
+    <<_ttfVersion::32, numTables::16,
     _searchRange::16,
     _entrySelector :: size(16),
     _rangeShift :: size(16),
@@ -580,7 +621,7 @@ defmodule Gutenex.PDF.TrueType do
     %{ttf | :tables => tables, :isCFF => isCFF}
   end
   defp readHeader({%{version: 0x4F54544F}=ttf, data}, _) do
-    <<numTables::16, 
+    <<numTables::16,
     _searchRange::16,
     _entrySelector :: size(16),
     _rangeShift :: size(16),
@@ -654,7 +695,7 @@ defmodule Gutenex.PDF.TrueType do
             *unitsPerEm   Glyph units per em
             *italicAngle  Italic angle in degrees ccw
             *stemV        stem weight in 1/1000ths of a point (approximate)
-        
+
             defaultWidth   default glyph width in 1/1000ths of a point
             charWidths     dictionary of character widths for every supported UCS character
                            code
@@ -662,7 +703,7 @@ defmodule Gutenex.PDF.TrueType do
 
     raw_head = rawTable(ttf, "head", data)
     <<_major::16, _minor::16, _rev::32, _checksumAdj::32,
-    0x5F, 0x0F, 0x3C, 0xF5, _flags::16, unitsPerEm::16, 
+    0x5F, 0x0F, 0x3C, 0xF5, _flags::16, unitsPerEm::16,
     _created::signed-64, _modified::signed-64,
     minx::signed-16, miny::signed-16, maxx::signed-16, maxy::signed-16,
     _macStyle::16, _lowestPPEM::16, _fontDirectionHint::signed-16,
@@ -707,7 +748,7 @@ defmodule Gutenex.PDF.TrueType do
       # if we have a v2 or higher struct we can read out
       # the xHeight and capHeight
       capHeight = if os2ver > 1 and v1rest do
-        <<xHeight::signed-16, capHeight::signed-16, 
+        <<xHeight::signed-16, capHeight::signed-16,
         defaultChar::16, breakChar::16, maxContext::16,
         v2rest::binary>> = v1rest
         scale(capHeight, unitsPerEm)
@@ -748,13 +789,13 @@ defmodule Gutenex.PDF.TrueType do
     #flagALLCAPS = 1 <<< 16
     #flagSMALLCAPS = 1 <<< 17
     flagFORCEBOLD = 1 <<< 18
-    
+
     # if SEMIBOLD or heavier, set forcebold flag
     forcebold = if ttf.usWeightClass >= 600, do: flagFORCEBOLD, else: 0
 
     # a non-zero angle sets the italic flag
     itals = if italic_angle != 0, do: flagITALIC, else: 0
-    
+
     # mark it fixed pitch if needed
     fixed = if isFixedPitch > 0, do: flagFIXED, else: 0
 
@@ -847,8 +888,8 @@ defmodule Gutenex.PDF.TrueType do
     # 3.0 is a Windows symbol font
     # 1.0 is a Macintosh font
     # TODO: if we have a preferred format, only need to parse that rather than all formats
-    raw_cmaps = Enum.map(cmapoffsets, fn({plat, enc, off}) -> {plat, enc, binary_part(data, raw_off + off, raw_len - off)} end) 
-    cid2gid = Enum.reduce(raw_cmaps, %{}, fn({plat, enc, raw_data}, acc) -> readCMapData(plat, enc, raw_data, acc) end) 
+    raw_cmaps = Enum.map(cmapoffsets, fn({plat, enc, off}) -> {plat, enc, binary_part(data, raw_off + off, raw_len - off)} end)
+    cid2gid = Enum.reduce(raw_cmaps, %{}, fn({plat, enc, raw_data}, acc) -> readCMapData(plat, enc, raw_data, acc) end)
     # reverse the lookup as naive ToUnicode map
     gid2cid = Enum.map(cid2gid, fn ({k, v}) -> {v, k} end) |> Map.new
     %{ttf | :cid2gid => cid2gid, :gid2cid => gid2cid}
@@ -861,7 +902,7 @@ defmodule Gutenex.PDF.TrueType do
   defp readCMapOffsets(tables, data, nTables) do
     <<platform::16, encoding::16, offset::32, remaining::binary>> = data
     t = {platform, encoding, offset}
-    readCMapOffsets([t | tables], remaining, nTables-1) 
+    readCMapOffsets([t | tables], remaining, nTables-1)
   end
 
   # read CMap format 4 (5.2.1.3.3: Segment mapping to delta values)
@@ -871,7 +912,7 @@ defmodule Gutenex.PDF.TrueType do
     <<doubleSegments::16,
     _searchRange::16,
     _entrySelector::16,
-    _rangeShift::16, 
+    _rangeShift::16,
     segments::binary>> = subdata
     #IO.puts "READ UNICODE TABLE #{platform} #{encoding}"
     segmentCount = div doubleSegments, 2
@@ -910,7 +951,7 @@ defmodule Gutenex.PDF.TrueType do
     #IO.inspect {"READ", fmt, platform, encoding}
     cmap
   end
-  
+
   defp mapCMap12Entry(startcode, endcode, glyphindex, charmap) do
     offset = glyphindex-startcode
     startcode..endcode
@@ -968,8 +1009,8 @@ defmodule Gutenex.PDF.TrueType do
     if raw == nil do
       Logger.debug "No #{table} table"
     end
-    <<versionMaj::16, versionMin::16, 
-    scriptListOff::16, featureListOff::16, 
+    <<versionMaj::16, versionMin::16,
+    scriptListOff::16, featureListOff::16,
     lookupListOff::16, _::binary>> = raw
     #if 1.1, also featureVariations::u32
     if {versionMaj, versionMin} != {1, 0} do
@@ -999,7 +1040,7 @@ defmodule Gutenex.PDF.TrueType do
   defp getFeatures(data) do
     <<nFeatures::16, fl::binary-size(nFeatures)-unit(48), _::binary>> = data
     features = for << <<tag::binary-size(4), offset::16>> <- fl >>, do: {tag, offset}
-    features 
+    features
     |> Enum.map(fn {t, o} -> readLookupIndices(t, o, data) end)
   end
   #returns {lookupType, lookupFlags, [subtable offsets], <<raw table bytes>>}
@@ -1013,7 +1054,7 @@ defmodule Gutenex.PDF.TrueType do
     script_table =  binary_part(data, offset, byte_size(data) - offset)
     <<defaultOff::16, nLang::16, langx::binary-size(nLang)-unit(48), _::binary>> = script_table
     langs = for << <<tag::binary-size(4), offset::16>> <- langx >>, do: {tag, offset}
-    langs = langs 
+    langs = langs
             |> Enum.map(fn {tag, offset} -> readFeatureIndices(tag, offset, script_table) end)
             |> Map.new
     langs = if defaultOff == 0 do
