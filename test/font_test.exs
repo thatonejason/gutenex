@@ -73,7 +73,7 @@ defmodule GutenexFontTest do
       |> Gutenex.set_font("NotoSans", 32)
       |> Gutenex.text_render_mode(:fill)
       |> Gutenex.write_text_br("Noto Sans")
-|> Gutenex.set_font("SourceSansPro", 32)
+      #|> Gutenex.set_font("SourceSansPro", 32)
       |> Gutenex.write_text_br("kern AWAY difficult waffle 1/2")
       |> Gutenex.write_text_br("Japanese \u713C")
       |> Gutenex.end_text

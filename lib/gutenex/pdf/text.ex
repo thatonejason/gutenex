@@ -96,9 +96,9 @@ defmodule Gutenex.PDF.Text do
   end
 
   def write_positioned_glyphs({glyphs, positions}, font_size) do
+    #TODO: if there is no y positioning/advance can reduce to TJ directive
     pos_g = Enum.zip(glyphs, positions)
             |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, font_size / 1000) end)
-    IO.inspect pos_g
     pos_g <> "\n"
   end
 

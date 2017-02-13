@@ -77,19 +77,32 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   # returns a list of glyphs and positioning information
-  def layout_text(ttf, text, features \\ ["liga", "kern"]) do
+  def layout_text(ttf, text, features \\ nil) do
     glyphs = text
     |> String.to_charlist
     |> Enum.map(fn(cid) -> Map.get(ttf.cid2gid, cid, 0) end)
 
-    # see spec for required, never disabled, and recommended
-    # features
-    # TODO: have a way to set or detect these
+    # see OpenType feature registry for required, never disabled, 
+    # and recommended features
+    features = if features == nil do
+      [
+        #"ccmp", "locl", # preprocess (compose/decompose, local forms)
+        #"mark", "mkmk", # marks (mark-to-base, mark-to-mark)
+        "clig", "liga", "rlig", # ligatures (contextual, standard, required)
+        "calt", "rclt", # contextual alts (standard, required)
+        "kern", "palt", # when kern enabled, also enable palt
+        #"opbd", "lfbd", "rtbd", # optical bounds -- requires app support to identify bounding glyphs?
+        "curs", # cursive (required? for Arabic, useful for cursive latin)
+      ]
+    else
+      features
+    end
     #TODO: pass in (or detect) script/lang combo
     script = "latn"
     lang = nil
     #DEBUG
-    features = features ++ ["frac"]
+    features = features ++ ["frac", "numr", "dnom"] #fraction features
+               |> Enum.uniq
 
     glyphs
     |> handle_substitutions(ttf, script, lang, features)
@@ -111,6 +124,7 @@ defmodule Gutenex.PDF.TrueType do
                |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {_, l} -> l end)
                |> List.flatten
                |> Enum.sort
+               |> Enum.uniq
     # apply the lookups
     Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), subL, acc) end)
   end
@@ -294,6 +308,8 @@ defmodule Gutenex.PDF.TrueType do
         # TODO: handle flags correctly!!
         remaining = Enum.slice(glyphs, length(m), length(glyphs))
         {output ++ [rep], remaining}
+      else
+        {output ++ [g], glyphs}
       end
     else
       {output ++ [g], glyphs}
@@ -378,6 +394,7 @@ defmodule Gutenex.PDF.TrueType do
                |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {_, l} -> l end)
                |> List.flatten
                |> Enum.sort
+               |> Enum.uniq
     # apply the lookups
     Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
   end
@@ -423,8 +440,6 @@ defmodule Gutenex.PDF.TrueType do
         # offset to classdef, offset to classdef
         # nClass1Records, nClass2Records
         <<class1Off::16, class2Off::16, nClass1Records::16, nClass2Records::16, records::binary>> = rest
-        IO.puts "kern table format #{fmt}"
-        #IO.puts "Class1 #{nClass1Records} Class2 #{nClass2Records}"
 
         #read in the class definitions
         class1 = parseGlyphClass(binary_part(table, class1Off, byte_size(table) - class1Off))
@@ -456,8 +471,7 @@ defmodule Gutenex.PDF.TrueType do
         #Enum.map(pos, fn _ -> nil end)
     end
     positioning = Enum.zip(pos, kerning) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    #{glyphs, positioning}
-    {glyphs, pos}
+    {glyphs, positioning}
   end
   #unhandled type; log and leave input untouched
   defp applyLookupGPOS({type, _flag, _table}, {glyphs, pos}) do
@@ -489,11 +503,10 @@ defmodule Gutenex.PDF.TrueType do
     c1 = classifyGlyph(g1, classDef1)
     c2 = classifyGlyph(g2, classDef2)
     pair = pairsets |> Enum.at(c1) |> Enum.at(c2)
-    if pair != nil do
+    {output, glyphs} = if pair != nil do
       {v1, v2} = pair
       oo = output ++ [v1]
-      IO.inspect {g1, v1}
-      {output, glyphs} = if v2 != nil do
+      if v2 != nil do
         {oo ++ [v2], glyphs}
       else
         {oo, [g2 | glyphs]}
@@ -557,7 +570,7 @@ defmodule Gutenex.PDF.TrueType do
 
   defp extractValueRecordVal(_flag, ""), do: {0, ""}
   defp extractValueRecordVal(flag, data) do
-    if flag do
+    if flag != 0 do
       <<x::signed-16, r::binary>> = data
       {x, r}
     else
