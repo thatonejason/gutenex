@@ -86,7 +86,7 @@ defmodule Gutenex.PDF.TrueType do
     # and recommended features
     features = if features == nil do
       [
-        #"ccmp", "locl", # preprocess (compose/decompose, local forms)
+        "ccmp", "locl", # preprocess (compose/decompose, local forms)
         #"mark", "mkmk", # marks (mark-to-base, mark-to-mark)
         "clig", "liga", "rlig", # ligatures (contextual, standard, required)
         "calt", "rclt", # contextual alts (standard, required)
@@ -96,6 +96,11 @@ defmodule Gutenex.PDF.TrueType do
       ]
     else
       features
+    end
+
+    # per OpenType spec, enable "palt" when "kern" is enabled
+    if "kern" in features do
+      ["palt" | features]
     end
     #TODO: pass in (or detect) script/lang combo
     script = "latn"
@@ -379,7 +384,7 @@ defmodule Gutenex.PDF.TrueType do
     # this is sufficient if kerning information is missing
     positions = glyphs
                 |> Enum.map(fn g -> Enum.at(ttf.glyphWidths, g, ttf.defaultWidth) end)
-                |> Enum.map(fn advance -> {0, 0, advance, 0} end)
+                |> Enum.map(fn advance -> {:std_width, 0, 0, advance, 0} end)
 
     #TODO: if no GPOS, fallback to kern table
     #
@@ -401,7 +406,11 @@ defmodule Gutenex.PDF.TrueType do
 
   #add two positions together, treat nils as zeroed structure
   defp addPos(p, nil), do: p
-  defp addPos({a,b,c,d}, {e,f,g,h}), do: {a+e, b+f, c+g, d+h}
+  defp addPos(p, {0,0,0,0}), do: p
+  defp addPos({:std_width, a,b,c,d}, {0,0,g,0}), do: {:kern, a, b, c+g, d}
+  defp addPos({:std_width, a,b,c,d}, {e,f,g,h}), do: {:pos, a+e, b+f, c+g, d+h}
+  defp addPos({type, a,b,c,d}, {e,f,g,h}), do: {type, a+e, b+f, c+g, d+h}
+
 
   # type 9 - when 32-bit offsets are used for subtables
   defp applyLookupGPOS({9, flag, offsets, table}, {glyphs, pos}) do
@@ -795,9 +804,9 @@ defmodule Gutenex.PDF.TrueType do
     italic_angle = italicMantissa + italicFraction / 16384.0
     #TODO: these should be const enum somewhere
     flagFIXED    = 0b0001
-    #flagSERIF    = 0b0010
+    flagSERIF    = 0b0010
     flagSYMBOLIC = 0b0100
-    #flagSCRIPT   = 0b1000
+    flagSCRIPT   = 0b1000
     flagITALIC = 0b1000000
     #flagALLCAPS = 1 <<< 16
     #flagSMALLCAPS = 1 <<< 17
@@ -814,7 +823,10 @@ defmodule Gutenex.PDF.TrueType do
 
     #TODO: figure out values of other flags (SERIF, etc)
     # SERIF and SCRIPT can be derived from sFamilyClass in OS/2 table
-    flags = flagSYMBOLIC ||| itals ||| forcebold ||| fixed
+    class = ttf.familyClass >>> 8
+    serif = if Enum.member?(1..7, class), do: flagSERIF, else: 0
+    script = if class == 10, do: flagSCRIPT, else: 0
+    flags = flagSYMBOLIC ||| itals ||| forcebold ||| fixed ||| serif ||| script
 
     #hhea
     raw_hhea = rawTable(ttf, "hhea", data)

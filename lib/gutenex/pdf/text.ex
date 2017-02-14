@@ -97,18 +97,19 @@ defmodule Gutenex.PDF.Text do
 
   def write_positioned_glyphs({glyphs, positions}, font_size) do
     #TODO: if there is no y positioning/advance can reduce to TJ directive
+    #TODO: if no xpos and xadvance == width can group together
     pos_g = Enum.zip(glyphs, positions)
             |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, font_size / 1000) end)
     pos_g <> "\n"
   end
 
   defp position_glyph(g, pos, scale) do
-    {xp, yp, xa, _} = pos
+    {type, xp, yp, xa, ya} = pos
     hex = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
     if xp == 0 and yp == 0 do
-      "<#{hex}> Tj #{xa * scale} 0 Td"
+      "<#{hex}> Tj #{xa * scale} #{ya * scale} Td"
     else
-      "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(xa - xp) * scale} 0 Td"
+      "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(xa - xp) * scale} #{(ya - yp) * scale} Td"
     end
   end
 end

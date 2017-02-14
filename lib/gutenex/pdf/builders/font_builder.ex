@@ -81,7 +81,8 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     compressed = IO.iodata_to_binary(zout)
     :zlib.close(z)
 
-    embed_subtype = "CIDFontType0C"
+    #embed_subtype = "CIDFontType0C"
+    embed_subtype = "OpenType"
     embed_bytes = {:stream, {:dict, %{"Subtype" => {:name, embed_subtype}, "Length" => byte_size(compressed), "Filter" => {:name, "FlateDecode"}}}, compressed}
 
     rc = %RenderContext{RenderContext.next_index(cmapc) |
@@ -153,7 +154,7 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
   def bucketWidth(gid, width, [{start, widths} | tail], _lastgid, lastWidth) do
     {[{start, widths ++ [lastWidth]} | tail], gid, width}
   end
-  def bucketWidth(gid, width, [{s, e, w} | tail], lastgid, w) do
+  def bucketWidth(gid, width, [{s, _, w} | tail], lastgid, w) do
     {[{s, lastgid, w} | tail], gid, width}
   end
   def bucketWidth(gid, width, [{s, e, w} | tail], lastgid, width) do
