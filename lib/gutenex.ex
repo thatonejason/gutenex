@@ -326,12 +326,11 @@ defmodule Gutenex do
     Write some text more break line!
   """
   def handle_cast({:text, :write_br, text_to_write}, [context, stream]) do
-    new_y = context.current_text_y - 48#context.current_leading
+    new_y = context.current_text_y - context.current_leading
     stream = if is_pid(context.current_font) do
       output = OpenTypeFont.layout(context.current_font, text_to_write)
                |>Text.write_positioned_glyphs(context.current_font_size)
       stream <> output <> " 1 0 0 1 #{context.current_text_x} #{new_y} Tm\n"
-      #stream <> output <> Text.break_text
     else
       stream <> Text.write_text_br(text_to_write)
     end
@@ -344,6 +343,7 @@ defmodule Gutenex do
   """
   def handle_cast({:text, :line_spacing, size}, [context, stream]) do
     stream = stream <> Text.line_spacing(size)
+    context = %Context {context | current_leading: size}
     {:noreply, [context, stream]}
   end
 

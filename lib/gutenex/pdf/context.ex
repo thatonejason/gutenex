@@ -20,6 +20,7 @@ defmodule Gutenex.PDF.Context do
     current_page: 1,
     current_font: %{},
     current_font_size: 10,
+    current_leading: 12,
     current_text_x: 0,
     current_text_y: 0,
     media_box: Page.page_size(:letter),
