@@ -167,34 +167,33 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
   def addR(n, []) do
     [[n]]
   end
-  def addR(n, ranges) do
-    range = List.last(ranges)
-    if List.last(range) + 1 == n do
-      List.replace_at(ranges, -1, range ++ [n])
+  def addR(n, [range | ranges]) do
+    if hd(range) + 1 == n do
+      [[n | range] | ranges]
     else
-      ranges ++ [[n]]
+      [[n], range | ranges]
     end
-
   end
+
   defp hexify(g), do: Integer.to_string(g, 16) |> String.pad_leading(4, "0")
   defp identity_tounicode_cmap(ttf) do
-
     keys = Map.keys(ttf.gid2cid)
-             |> Enum.sort
-             |> Enum.reduce([], &addR/2)
+           |> Enum.sort
+           |> Enum.reduce([], &addR/2)
+           |> Enum.reverse
     ranges = keys
-    |> Enum.filter(fn x -> length(x) > 1 end)
-    |> Enum.map(fn x -> {List.first(x), List.last(x)} end)
-    |> Enum.map(fn {first, last} ->
-      cids = first..last
-             |> Enum.map(fn n -> Map.get(ttf.gid2cid, n) |> hexify end)
-             |> Enum.map_join(" ", fn s -> "<#{s}>" end)
-      "<#{hexify(first)}> <#{hexify(last)}> [#{cids}]\n"
-    end)
+      |> Stream.filter(fn x -> length(x) > 1 end)
+      |> Stream.map(fn x -> {List.last(x), List.first(x)} end)
+      |> Enum.map(fn {first, last} ->
+        cids = first..last
+              |> Stream.map(fn n -> Map.get(ttf.gid2cid, n) |> hexify end)
+              |> Enum.map_join(" ", fn s -> "<#{s}>" end)
+        "<#{hexify(first)}> <#{hexify(last)}> [#{cids}]\n"
+      end)
     singles = keys
-              |> Enum.filter(fn x -> length(x) == 1 end)
-              |> Enum.map(&hd/1)
-              |> Enum.map(fn x -> {hexify(x), Map.get(ttf.gid2cid, x) |> hexify} end)
+              |> Stream.filter(fn x -> length(x) == 1 end)
+              |> Stream.map(&hd/1)
+              |> Stream.map(fn x -> {hexify(x), Map.get(ttf.gid2cid, x) |> hexify} end)
               |> Enum.map(fn {k, s} -> "<#{k}> <#{s}>\n" end)
     charblock = if length(singles) > 0 do
       """
