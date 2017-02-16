@@ -675,7 +675,15 @@ defmodule Gutenex.PDF.TrueType do
     <<_fmt::16, nRecords::16, strOffset::16, r::binary>> = raw
     #IO.puts "Name table format #{fmt}"
     recs = readNameRecords([], r, nRecords)
-    # TODO: pick best supported platform/encoding
+    # pick best supported platform/encoding
+    selected = recs 
+               |> Enum.map(fn r -> {r.platform, r.encoding} end)
+               |> findPreferredEncoding
+    recs = if selected != nil do
+      Enum.filter(recs, fn r -> {r.platform, r.encoding} == selected end)
+    else
+      recs
+    end
     # and just parse that one
     names = Enum.map(recs, fn(r)->recordToName(r, strOffset, raw) end)
     #prefer PS name
@@ -898,6 +906,20 @@ defmodule Gutenex.PDF.TrueType do
       true -> nil
     end
   end
+
+  defp findPreferredEncoding(candidates) do
+    # Select a Unicode CMAP by preference
+    preferred = [
+      # 32-bit Unicode formats
+      {3,10}, {0, 6}, {0, 4}, 
+      # 16-bit Unicode formats
+      {3,1}, {0,3}, {0,2}, {0, 1}, {0, 0},
+      # Windows symbol font (usually unicode)
+      {3, 0}
+    ]
+    preferred |> Enum.find(fn {plat, enc} -> {plat, enc} in candidates end)
+  end
+
   #cmap header
   defp extractCMap(ttf, data) do
     raw_cmap = rawTable(ttf, "cmap", data)
@@ -905,16 +927,25 @@ defmodule Gutenex.PDF.TrueType do
     <<_version::16, numtables::16, cmaptables::binary>> = raw_cmap
     # read in tableoffsets (plat, enc, offset)
     {cmapoffsets, _cmapdata} = readCMapOffsets([], cmaptables, numtables)
-    # IO.inspect cmapoffsets
+
+    # find the best available format
+    selected = cmapoffsets 
+               |> Enum.map(fn {plat, enc, _} -> {plat, enc} end)
+               |> findPreferredEncoding
+
+    # if we found a preferred format, locate it
+    {plat, enc, off} = if selected != nil do
+      Enum.find(cmapoffsets, fn {plat, enc, _} -> {plat, enc} == selected end)
+    else
+      # no preferred format available, just handle the first one
+      hd(cmapoffsets)
+    end
+
     #we need the table's offset and length to find subtables
     {raw_off, raw_len} = lookupTable(ttf, "cmap")
-    # ideal is 3.10, fmt 12 (full MS unicode support)
-    # next is 3.1, fmt 4 (standard MS unicode support)
-    # 3.0 is a Windows symbol font
-    # 1.0 is a Macintosh font
-    # TODO: if we have a preferred format, only need to parse that rather than all formats
-    raw_cmaps = Enum.map(cmapoffsets, fn({plat, enc, off}) -> {plat, enc, binary_part(data, raw_off + off, raw_len - off)} end)
-    cid2gid = Enum.reduce(raw_cmaps, %{}, fn({plat, enc, raw_data}, acc) -> readCMapData(plat, enc, raw_data, acc) end)
+    raw_cmap = binary_part(data, raw_off + off, raw_len - off)
+    cid2gid = readCMapData(plat, enc, raw_cmap, %{})
+
     # reverse the lookup as naive ToUnicode map
     gid2cid = Enum.map(cid2gid, fn ({k, v}) -> {v, k} end) |> Map.new
     %{ttf | :cid2gid => cid2gid, :gid2cid => gid2cid}
