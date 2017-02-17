@@ -77,12 +77,12 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   # returns a list of glyphs and positioning information
-  def layout_text(ttf, text, features \\ nil) do
+  def layout_text(ttf, text, features \\ nil, script \\ "latn", lang \\ nil) do
     glyphs = text
     |> String.to_charlist
     |> Enum.map(fn(cid) -> Map.get(ttf.cid2gid, cid, 0) end)
 
-    # see OpenType feature registry for required, never disabled, 
+    # see OpenType feature registry for required, never disabled,
     # and recommended features
     features = if features == nil do
       [
@@ -102,11 +102,11 @@ defmodule Gutenex.PDF.TrueType do
     if "kern" in features do
       ["palt" | features]
     end
+
     #TODO: pass in (or detect) script/lang combo
-    script = "latn"
-    lang = nil
+
     #DEBUG
-    features = features ++ ["frac", "numr", "dnom"] #fraction features
+    features = "frac", "numr", "dnom" | features] #fraction features
                |> Enum.uniq
 
     glyphs
@@ -116,20 +116,23 @@ defmodule Gutenex.PDF.TrueType do
 
   defp handle_substitutions(glyphs, ttf, script, lang, active_features) do
     # use data in GSUB to do any substitutions
-    {subS, subF, subL} = ttf.substitutions
+    {scripts, subF, subL} = ttf.substitutions
     # see spec for required, never disabled, and recommended
     #availFeatures = subS[script][lang]
     #           |> Enum.map(fn x -> Enum.at(subF, x) end)
     #           |> Enum.map(fn {tag, _} -> tag end)
     #           |> Enum.uniq
     #IO.inspect availFeatures
+
+    availableFeatures = getFeatures(scripts, script, lang)
     # combine indices, apply in order given in LookupList table
-    lookups = subS[script][lang]
+    lookups = availableFeatures
                |> Enum.map(fn x -> Enum.at(subF, x) end)
                |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {_, l} -> l end)
                |> List.flatten
                |> Enum.sort
                |> Enum.uniq
+
     # apply the lookups
     Enum.reduce(lookups, glyphs, fn (x, acc) -> applyLookupGSUB(Enum.at(subL, x), subL, acc) end)
   end
@@ -382,6 +385,7 @@ defmodule Gutenex.PDF.TrueType do
   defp position_glyphs(glyphs, ttf, script, lang, active_features) do
     # initially just use glyph width as xadvance
     # this is sufficient if kerning information is missing
+    # TODO: handle vertical writing
     positions = glyphs
                 |> Enum.map(fn g -> Enum.at(ttf.glyphWidths, g, ttf.defaultWidth) end)
                 |> Enum.map(fn advance -> {:std_width, 0, 0, advance, 0} end)
@@ -391,10 +395,12 @@ defmodule Gutenex.PDF.TrueType do
     # use data in the GPOS and BASE table
     # to kern, position, and join
     {scripts, features, lookups} = ttf.positions
+
+    availableFeatures = getFeatures(scripts, script, lang)
+
     # each feature provides lookup indices
     # combine indices, apply in order given in LookupList table
-    # for each lookup, apply to each glyph in order
-    indices = scripts[script][lang]
+    indices = availableFeatures
                |> Enum.map(fn x -> Enum.at(features, x) end)
                |> Enum.filter_map(fn {tag, _} -> tag in active_features end, fn {_, l} -> l end)
                |> List.flatten
@@ -402,6 +408,14 @@ defmodule Gutenex.PDF.TrueType do
                |> Enum.uniq
     # apply the lookups
     Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
+  end
+
+  def getFeatures(scripts, script, lang) do
+    # Fallback to "DFLT" or "latn" script; else ignore all
+    selected_script = scripts[script] || scripts["DFLT"] || scripts["latn"] || %{}
+
+    # Fallback to nil (default) language for script
+    selected_script[lang] || selected_script[nil] || []
   end
 
   #add two positions together, treat nils as zeroed structure
@@ -438,7 +452,7 @@ defmodule Gutenex.PDF.TrueType do
     1 ->
       <<val::binary-size(valSize), _::binary>> = rest
       val = readPositioningValueRecord(valueFormat, val)
-      Enum.map(glyphs, fn g -> 
+      Enum.map(glyphs, fn g ->
         coverloc = findCoverageIndex(coverage, g)
         if coverloc != nil, do: val, else: nil
       end)
@@ -702,7 +716,7 @@ defmodule Gutenex.PDF.TrueType do
     #IO.puts "Name table format #{fmt}"
     recs = readNameRecords([], r, nRecords)
     # pick best supported platform/encoding
-    selected = recs 
+    selected = recs
                |> Enum.map(fn r -> {r.platform, r.encoding} end)
                |> findPreferredEncoding
     recs = if selected != nil do
@@ -937,7 +951,7 @@ defmodule Gutenex.PDF.TrueType do
     # Select a Unicode CMAP by preference
     preferred = [
       # 32-bit Unicode formats
-      {3,10}, {0, 6}, {0, 4}, 
+      {3,10}, {0, 6}, {0, 4},
       # 16-bit Unicode formats
       {3,1}, {0,3}, {0,2}, {0, 1}, {0, 0},
       # Windows symbol font (usually unicode)
@@ -955,7 +969,7 @@ defmodule Gutenex.PDF.TrueType do
     {cmapoffsets, _cmapdata} = readCMapOffsets([], cmaptables, numtables)
 
     # find the best available format
-    selected = cmapoffsets 
+    selected = cmapoffsets
                |> Enum.map(fn {plat, enc, _} -> {plat, enc} end)
                |> findPreferredEncoding
 
