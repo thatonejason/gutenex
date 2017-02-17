@@ -429,6 +429,32 @@ defmodule Gutenex.PDF.TrueType do
     Enum.reduce(offsets, {glyphs, pos}, fn (offset, input) -> applyLookupGPOS({type, flag, binary_part(table, offset, byte_size(table) - offset)}, input) end)
   end
 
+  #type 1 - single positioning
+  defp applyLookupGPOS({1, _flag, table}, {glyphs, pos}) do
+    <<fmt::16, covOff::16, valueFormat::16, rest::binary>> = table
+    coverage = parseCoverage(binary_part(table, covOff, byte_size(table) - covOff))
+    valSize = valueRecordSize(valueFormat)
+    adjusted = case fmt do
+    1 ->
+      <<val::binary-size(valSize), _::binary>> = rest
+      val = readPositioningValueRecord(valueFormat, val)
+      Enum.map(glyphs, fn g -> 
+        coverloc = findCoverageIndex(coverage, g)
+        if coverloc != nil, do: val, else: nil
+      end)
+    2 ->
+      <<nVals::16, _::binary>> = rest
+      recs = binary_part(rest, 16, nVals * valSize)
+      values = for << <<val::binary-size(valSize)>> <- recs >>, do: readPositioningValueRecord(valueFormat, val)
+      Enum.map(glyphs, fn g ->
+        coverloc = findCoverageIndex(coverage, g)
+        if coverloc != nil, do: Enum.at(values, coverloc), else: nil
+      end)
+    end
+    positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
+    {glyphs, positioning}
+  end
+
   # type 2 - pair positioning (ie, kerning)
   defp applyLookupGPOS({2, _flag, table}, {glyphs, pos}) do
     #IO.puts "GPOS kern(2)"
