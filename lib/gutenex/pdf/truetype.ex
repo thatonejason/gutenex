@@ -5,6 +5,7 @@ defmodule Gutenex.PDF.OpenTypeFont do
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, :ok, opts)
   end
+
   def init(:ok) do
     {:ok, TrueType.new()}
   end
@@ -17,8 +18,8 @@ defmodule Gutenex.PDF.OpenTypeFont do
 
   # layout a run of text
   # send back the glyphs and positioning data
-  def layout(pid, text) do
-    GenServer.call(pid, {:layout, text})
+  def layout(pid, text, features \\ nil) do
+    GenServer.call(pid, {:layout, text, features})
   end
 
   # get the font structure (for additional analysis)
@@ -33,8 +34,8 @@ defmodule Gutenex.PDF.OpenTypeFont do
   def handle_call(:ttf, _from, ttf) do
     {:reply, ttf, ttf}
   end
-  def handle_call({:layout, text}, _from, ttf) do
-    output = TrueType.layout_text(ttf, text)
+  def handle_call({:layout, text, features}, _from, ttf) do
+    output = TrueType.layout_text(ttf, text, features)
     {:reply, output, ttf}
   end
 end
@@ -99,30 +100,24 @@ defmodule Gutenex.PDF.TrueType do
     end
 
     # per OpenType spec, enable "palt" when "kern" is enabled
-    if "kern" in features do
-      ["palt" | features]
-    end
-
-    #TODO: pass in (or detect) script/lang combo
-
-    #DEBUG
-    features = "frac", "numr", "dnom" | features] #fraction features
-               |> Enum.uniq
+    features = if "kern" in features, do: ["palt" | features], else: features
 
     glyphs
     |> handle_substitutions(ttf, script, lang, features)
     |> position_glyphs(ttf, script, lang, features)
   end
 
+  def discover_features(ttf) do
+    {_, gsub_features, _} = ttf.substitutions
+    {_, gpos_features, _} = ttf.positions
+    gsub_features ++ gpos_features
+    |> Enum.map(fn {tag, _} -> tag end)
+    |> Enum.uniq
+  end
+
   defp handle_substitutions(glyphs, ttf, script, lang, active_features) do
     # use data in GSUB to do any substitutions
     {scripts, subF, subL} = ttf.substitutions
-    # see spec for required, never disabled, and recommended
-    #availFeatures = subS[script][lang]
-    #           |> Enum.map(fn x -> Enum.at(subF, x) end)
-    #           |> Enum.map(fn {tag, _} -> tag end)
-    #           |> Enum.uniq
-    #IO.inspect availFeatures
 
     availableFeatures = getFeatures(scripts, script, lang)
     # combine indices, apply in order given in LookupList table
@@ -173,6 +168,8 @@ defmodule Gutenex.PDF.TrueType do
     # alternate set tables
     altOffsets = for << <<x::16>> <- aoff >>, do: x
     alts = Enum.map(altOffsets, fn altOffset -> parseAlts(table, altOffset) end)
+    # TODO: seems like there's a way in unicode to specify alt??
+    # More research required, for now substitute a random alt
     Enum.map(glyphs, fn g -> applyRandomAlt(g, coverage, alts) end)
   end
   # GSUB type 4 -- ligature substition (single glyph replaces multiple glyphs)
@@ -410,6 +407,8 @@ defmodule Gutenex.PDF.TrueType do
     Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> applyLookupGPOS(Enum.at(lookups, x), acc) end)
   end
 
+  # given a script and language, get the appropriate features
+  # (falling back as appropriate)
   def getFeatures(scripts, script, lang) do
     # Fallback to "DFLT" or "latn" script; else ignore all
     selected_script = scripts[script] || scripts["DFLT"] || scripts["latn"] || %{}

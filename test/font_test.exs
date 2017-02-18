@@ -36,7 +36,7 @@ defmodule GutenexFontTest do
     ttf = TrueType.new
           |> TrueType.parse("./test/support/fonts/NotoSans-Bold.ttf")
     {glyphs, _} = TrueType.layout_text(ttf, "ABC")
-    assert glyphs == [36 , 37 ,38]
+    assert glyphs == [36, 37, 38]
   end
 
   test "Apply OpenType substitutions (GSUB 4) - exercise ligature" do
@@ -53,6 +53,27 @@ defmodule GutenexFontTest do
     assert glyphs == [1617, 1726, 1604]
   end
 
+  #TODO: test turning zero on and off in an integration test
+  @tag :integration
+  test "Turn OpenType feature on and off" do
+    {:ok, ssp} = OpenTypeFont.start_link
+    OpenTypeFont.parse(ssp, "./test/support/fonts/SourceSansPro-Regular.otf")
+    {:ok, pid} = Gutenex.start_link
+    Gutenex.register_font(pid, "SourceSansPro", ssp)
+      |> Gutenex.begin_text
+      |> Gutenex.text_leading(32)
+      |> Gutenex.text_position(40, 180)
+      |> Gutenex.text_render_mode(:fill)
+      |> Gutenex.set_font("SourceSansPro", 32)
+      |> Gutenex.write_text_br("Default zero: 0")
+      |> Gutenex.activate_feature("zero")
+      |> Gutenex.write_text_br("OpenType zero on: 0")
+      |> Gutenex.deactivate_feature("zero")
+      |> Gutenex.write_text_br("OpenType zero off: 0")
+      |> Gutenex.end_text
+      |> Gutenex.export("./tmp/zero.pdf")
+  end
+
   @tag :integration
   test "embed font" do
     File.rm("./tmp/embed.pdf")
@@ -66,8 +87,8 @@ defmodule GutenexFontTest do
 
     {:ok, pid} = Gutenex.start_link
     Gutenex.register_font(pid, "NotoSans", ttf)
-         |> Gutenex.register_font("SourceSansPro", ssp)
-         |> Gutenex.register_font("NotoJP", notojp)
+      |> Gutenex.register_font("SourceSansPro", ssp)
+      |> Gutenex.register_font("NotoJP", notojp)
       |> Gutenex.begin_text
       |> Gutenex.text_leading(48)
       |> Gutenex.set_font("Helvetica", 48)
@@ -78,7 +99,9 @@ defmodule GutenexFontTest do
       |> Gutenex.text_render_mode(:fill)
       |> Gutenex.write_text_br("Noto Sans")
       |> Gutenex.set_font("SourceSansPro", 32)
+      |> Gutenex.activate_feature("frac")
       |> Gutenex.write_text_br("kern AWAY difficult waffle 1/2")
+      |> Gutenex.deactivate_feature("frac")
       |> Gutenex.set_font("NotoJP", 32)
       |> Gutenex.write_text_br("Japanese \u713C")
       |> Gutenex.end_text

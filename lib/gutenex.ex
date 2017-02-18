@@ -101,6 +101,22 @@ defmodule Gutenex do
   end
 
   @doc """
+  Activate an OpenType feature
+  """
+  def activate_feature(pid, tag) do
+    GenServer.cast(pid, {:text, :add_feature, tag})
+    pid
+  end
+
+  @doc """
+  Deactivate an OpenType feature
+  """
+  def deactivate_feature(pid, tag) do
+    GenServer.cast(pid, {:text, :remove_feature, tag})
+    pid
+  end
+
+  @doc """
   Set line space
   """
   def text_leading(pid, size) do
@@ -312,7 +328,7 @@ defmodule Gutenex do
   """
   def handle_cast({:text, :write, text_to_write}, [context, stream]) do
     stream = if is_pid(context.current_font) do
-      output = OpenTypeFont.layout(context.current_font, text_to_write)
+      output = OpenTypeFont.layout(context.current_font, text_to_write, context.features)
                |>Text.write_positioned_glyphs(context.current_font_size)
       stream <> output
     else
@@ -328,7 +344,7 @@ defmodule Gutenex do
   def handle_cast({:text, :write_br, text_to_write}, [context, stream]) do
     new_y = context.current_text_y - context.current_leading
     stream = if is_pid(context.current_font) do
-      output = OpenTypeFont.layout(context.current_font, text_to_write)
+      output = OpenTypeFont.layout(context.current_font, text_to_write, context.features)
                |>Text.write_positioned_glyphs(context.current_font_size)
       stream <> output <> " 1 0 0 1 #{context.current_text_x} #{new_y} Tm\n"
     else
@@ -337,6 +353,7 @@ defmodule Gutenex do
     context = %Context{context | current_text_y: new_y}
     {:noreply, [context, stream]}
   end
+
 
   @doc """
     Set line space
@@ -420,6 +437,17 @@ defmodule Gutenex do
   """
   def handle_cast({:font, :register, {font_name, font_data}}, [context, stream]) do
     new_context = Gutenex.PDF.Context.register_font(context, font_name, font_data)
+    {:noreply, [new_context, stream]}
+  end
+
+  def handle_cast({:text, :add_feature, tag}, [context, stream]) do
+    new_context = %Context {context | features: [tag | context.features]}
+    {:noreply, [new_context, stream]}
+  end
+
+  def handle_cast({:text, :remove_feature, tag}, [context, stream]) do
+    features = context.features |> Enum.filter(fn t -> t != tag end)
+    new_context = %Context {context | features: features}
     {:noreply, [new_context, stream]}
   end
 
