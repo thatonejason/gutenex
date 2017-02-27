@@ -20,7 +20,6 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
   # This handles embedding a Type0 composite font per the 1.7 spec
   defp build_fonts(%RenderContext{}=render_context, [{font_alias, pid } | fonts]) when is_pid(pid) do
     ttf = OpenTypeFont.font_structure(pid)
-    IO.puts "Font #{ttf.name} is #{ttf.isCFF}"
     # add stream, add descriptor, add descfont, add tounicodemap, add font
     # font =  {:dict, font_definition}
     fo = RenderContext.current_object(render_context)

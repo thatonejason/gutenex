@@ -53,9 +53,26 @@ defmodule GutenexFontTest do
     assert glyphs == [1617, 1726, 1604]
   end
 
-  #TODO: test turning zero on and off in an integration test
+  test "Apply mark-to-base positioning" do
+    ttf = TrueType.new
+          |> TrueType.parse("./test/support/fonts/NotoSans-Bold.ttf")
+    {glyphs, pos} = TrueType.layout_text(ttf, "bi\u0300g", ["ccmp", "mark"])
+    # ccmp will replace i with dotless variant
+    assert glyphs == [69, 243, 608, 74]
+
+    # mark will position accent over the i
+    xpos = pos |> Enum.map(fn {_,x,_,_,_} -> x end)
+    xadv = pos |> Enum.map(fn {_,_,_,x,_} -> x end)
+    # mark has an xOffset
+    assert xpos == [0, 0, 636.82421875, 0]
+    # mark has zero width
+    assert xadv == [632.8125, 305.17578125, 0, 632.8125]
+  end
+
+  # turn OpenType features on and off in an integration test
   @tag :integration
-  test "Turn OpenType feature on and off" do
+  test "Turn OpenType features on and off" do
+    File.rm("./tmp/zero.pdf")
     {:ok, ssp} = OpenTypeFont.start_link
     OpenTypeFont.parse(ssp, "./test/support/fonts/SourceSansPro-Regular.otf")
     {:ok, pid} = Gutenex.start_link
@@ -70,8 +87,42 @@ defmodule GutenexFontTest do
       |> Gutenex.write_text_br("OpenType zero on: 0")
       |> Gutenex.deactivate_feature("zero")
       |> Gutenex.write_text_br("OpenType zero off: 0")
+      |> Gutenex.activate_feature("onum")
+      |> Gutenex.write_text_br("OpenType onum: 0123456789")
+      |> Gutenex.deactivate_feature("onum")
+      |> Gutenex.activate_feature("pnum")
+      |> Gutenex.write_text_br("OpenType pnum: 0123456789")
+      |> Gutenex.deactivate_feature("pnum")
+      |> Gutenex.activate_feature("tnum")
+      |> Gutenex.activate_feature("smcp")
+      |> Gutenex.write_text_br("OpenType tnum: 0123456789")
       |> Gutenex.end_text
       |> Gutenex.export("./tmp/zero.pdf")
+  end
+
+  @tag :integration
+  test "basic marks (combining diacratics)" do
+    File.rm("./tmp/diacratics.pdf")
+    {:ok, ttf} = OpenTypeFont.start_link
+    OpenTypeFont.parse(ttf, "./test/support/fonts/NotoSans-Bold.ttf")
+    {:ok, ssp} = OpenTypeFont.start_link
+    OpenTypeFont.parse(ssp, "./test/support/fonts/SourceSansPro-Regular.otf")
+
+    {:ok, pid} = Gutenex.start_link
+    Gutenex.register_font(pid, "NotoSans", ttf)
+      |> Gutenex.register_font("SourceSansPro", ssp)
+      |> Gutenex.begin_text
+      |> Gutenex.text_leading(40)
+      |> Gutenex.text_position(40, 180)
+      |> Gutenex.set_font("NotoSans", 32)
+      |> Gutenex.text_render_mode(:fill)
+      |> Gutenex.write_text_br("a\u0300e\u0301i\u0302o\u0303u\u0304")
+      |> Gutenex.write_text_br("a\u0300e\u0300i\u0300o\u0300u\u0300")
+      |> Gutenex.write_text_br("aeiou")
+#|> Gutenex.set_font("SourceSansPro", 32)
+#|> Gutenex.write_text_br("f\u0300g\u0306\u0301u\u0302\u0307")
+      |> Gutenex.end_text
+      |> Gutenex.export("./tmp/diacratics.pdf")
   end
 
   @tag :integration
