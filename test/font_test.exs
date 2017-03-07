@@ -69,6 +69,45 @@ defmodule GutenexFontTest do
     assert xadv == [632.8125, 305.17578125, 0, 632.8125]
   end
 
+  test "Exercise GSUB 2 - one-to-many substitution" do
+    ttf = TrueType.new
+          |> TrueType.parse("./test/support/fonts/NotoNastaliqUrdu-Regular.ttf")
+    # include a following character to ensure returned glyphs are flattened properly
+    # Qaf, Alef
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0642\u0627", ["ccmp"])
+    # decompose QAF into QAFX and TWO_DOTS_ABOVE
+    assert glyphs == [889, 16, 858]
+  end
+
+  test "Test positional substitutions" do
+    ttf = TrueType.new
+          |> TrueType.parse("./test/support/fonts/NotoNastaliqUrdu-Regular.ttf")
+
+    # TODO: this will require a proper arabic shaper
+    # without it the init/medi/fina/isol features
+    # are not sequenced properly
+
+    # no substitutions
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", [])
+    assert glyphs == [881]
+
+    # enable initial
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["init"])
+    assert glyphs == [416]
+
+    # enable medial
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["medi"])
+    assert glyphs == [441]
+
+    # enable final
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["fina"])
+    assert glyphs == [249]
+
+    # enable isolation
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["isol"])
+    assert glyphs == [248]
+  end
+
   # turn OpenType features on and off in an integration test
   @tag :integration
   test "Turn OpenType features on and off" do

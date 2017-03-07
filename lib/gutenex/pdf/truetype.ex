@@ -92,12 +92,13 @@ defmodule Gutenex.PDF.TrueType do
     features = if features == nil do
       [
         "ccmp", "locl", # preprocess (compose/decompose, local forms)
-        "mark", "mkmk", # marks (mark-to-base, mark-to-mark)
+        "mark", "mkmk", "mset", # marks (mark-to-base, mark-to-mark, mark position via substitution)
         "clig", "liga", "rlig", # ligatures (contextual, standard, required)
         "calt", "rclt", # contextual alts (standard, required)
         "kern", "palt", # when kern enabled, also enable palt
         #"opbd", "lfbd", "rtbd", # optical bounds -- requires app support to identify bounding glyphs?
-        "curs", # cursive (required? for Arabic, useful for cursive latin)
+        "curs", # cursive (required; best tested with arabic font)
+        "isol", "fina", "medi", "init", # positional forms (required; best tested with arabic font)
       ]
     else
       features
@@ -178,10 +179,19 @@ defmodule Gutenex.PDF.TrueType do
     Enum.map(glyphs, replace)
   end
 
-  #GSUB 2 - multiple substitution (expand one glyph into several
-  defp applyLookupGSUB({2, _flag, _table}, _gdef, _, glyphs) do
-    Logger.debug "GSUB 2 - multiple substitution"
+  #GSUB 2 - multiple substitution (expand one glyph into several)
+  defp applyLookupGSUB({2, _flag, table}, _gdef, _, glyphs) do
+    <<_format::16, covOff::16, nSeq::16, subOff::binary-size(nSeq)-unit(16), _::binary>> = table
+    coverage = parseCoverage(subtable(table, covOff))
+    # sequence tables
+    seqOffsets = for << <<x::16>> <- subOff >>, do: x
+
+    # sequence table structure identical to alt table
+    sequences = Enum.map(seqOffsets, fn seqOffset -> parseAlts(table, seqOffset) end)
     glyphs
+
+    |> Enum.map(fn g -> applyMultiSub(g, coverage, sequences) end)
+    |> List.flatten
   end
 
   # GSUB type 3 -- alternate substitution (one-for-one)
@@ -210,15 +220,80 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   #GSUB type 5 -- contextual substitution
-  defp applyLookupGSUB({5, _flag, _table}, _gdef, _, glyphs) do
-    Logger.debug "GSUB 5 - contextual substitution"
-    glyphs
+  defp applyLookupGSUB({5, _flag, table}, _gdef, lookups, glyphs) do
+    <<format::16, details::binary>> = table
+    output = case format do
+      1 ->
+        <<covOff::16, 
+          nRulesets::16, 
+          srsOff::binary-size(nRulesets)-unit(16),
+          _::binary>> = details
+        coverage = parseCoverage(subtable(table, covOff))
+        srs = for << <<offset::16>> <- srsOff >>, do: subtable(table, offset)
+        rulesets = srs
+                   |> Enum.map(fn ruleset -> 
+                      <<nRules::16, srOff::binary-size(nRules)-unit(16), _::binary>> = ruleset
+                      rules = for << <<offset::16>> <- srOff >>, do: subtable(ruleset, offset)
+                      rules |> Enum.map(&parseContextSubRule1(&1))
+                      end)
+        applyContextSub1(coverage, rulesets, lookups, glyphs, [])
+      2 ->
+        <<covOff::16, 
+          classDefOff::16,
+          nRulesets::16, 
+          srsOff::binary-size(nRulesets)-unit(16),
+          _::binary>> = details
+        coverage = parseCoverage(subtable(table, covOff))
+        classes = parseGlyphClass(subtable(table, classDefOff))
+        srs = for << <<offset::16>> <- srsOff >>, do: if offset != 0, do: subtable(table, offset), else: nil
+        rulesets = srs
+                   |> Enum.map(fn ruleset -> 
+                      if ruleset != nil do
+                        <<nRules::16, srOff::binary-size(nRules)-unit(16), _::binary>> = ruleset
+                        rules = for << <<offset::16>> <- srOff >>, do: subtable(ruleset, offset)
+                        rules |> Enum.map(&parseContextSubRule1(&1))
+                      else
+                        nil
+                      end
+                      end)
+        applyContextSub2(coverage, rulesets, classes, lookups, glyphs, [])
+      3 ->
+        Logger.debug "GSUB 5.3 - contextual substitution"
+        glyphs
+      _ ->
+        Logger.debug "GSUB 5 - contextual substitution format #{format}"
+        glyphs
+    end
+    output
   end
 
   #GSUB type 6 -- chained contextual substitution
   defp applyLookupGSUB({6, _flag, table}, _gdef, lookups, glyphs) do
     <<format::16, details::binary>> = table
     output = case format do
+      1 ->
+        Logger.debug "GSUB 6.1 - chained substitution"
+        glyphs
+      2 ->
+        <<covOff::16, btClassOff::16, inputClassOff::16, laClassOff::16,
+          nClassSets::16, classSetOff::binary-size(nClassSets)-unit(16),
+          _::binary>> = details
+        coverage = parseCoverage(subtable(table, covOff))
+        btClasses = parseGlyphClass(subtable(table, btClassOff))
+        inputClasses = parseGlyphClass(subtable(table, inputClassOff))
+        laClasses = parseGlyphClass(subtable(table, laClassOff))
+        srs = for << <<offset::16>> <- classSetOff >>, do: if offset != 0, do: subtable(table, offset), else: nil
+        rulesets =  srs
+                    |> Enum.map(fn ruleset ->
+                      if ruleset != nil do
+                        <<nRules::16, srOff::binary-size(nRules)-unit(16), _::binary>> = ruleset
+                        rules = for << <<offset::16>> <- srOff >>, do: subtable(ruleset, offset)
+                        rules |> Enum.map(&parseChainedSubRule2(&1))
+                      else
+                        nil
+                      end
+                    end)
+        applyChainingContextSub2(coverage, rulesets, {btClasses, inputClasses, laClasses}, lookups, glyphs, [])
       3 ->
         <<backtrackCount::16, backoff::binary-size(backtrackCount)-unit(16),
           inputCount::16, inputOff::binary-size(inputCount)-unit(16),
@@ -322,6 +397,14 @@ defmodule Gutenex.PDF.TrueType do
     coverloc = findCoverageIndex(coverage, g)
     if coverloc != nil, do: Enum.at(replacements, coverloc), else: g
   end
+  defp applyMultiSub(g, coverage, seq) do
+    coverloc = findCoverageIndex(coverage, g)
+    if coverloc != nil do
+      Enum.at(seq, coverloc)
+    else
+      g
+    end
+  end
   defp applyRandomAlt(g, coverage, alts) do
     coverloc = findCoverageIndex(coverage, g)
     if coverloc != nil do
@@ -362,6 +445,130 @@ defmodule Gutenex.PDF.TrueType do
       {output ++ [g], glyphs}
     end
     applyLigature(coverage, ligatures, glyphs, output)
+  end
+
+  defp parseContextSubRule1(rule) do
+    <<nGlyphs::16, substCount::16, rest::binary>> = rule
+    # subtract one since initial glyph handled by coverage
+    glyphCount = nGlyphs - 1
+    <<input::binary-size(glyphCount)-unit(16), 
+      substRecs::binary-size(substCount)-unit(32), 
+      _::binary>> = rest
+
+    input_glyphs = for << <<g::16>> <- input >>, do: g
+    substRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
+    {input_glyphs, substRecords}
+  end
+
+  defp parseChainedSubRule2(rule) do
+    <<btCount::16, bt::binary-size(btCount)-unit(16),
+    nGlyphs::16, rest::binary>> = rule
+    # subtract one since initial glyph handled by coverage
+    glyphCount = nGlyphs - 1
+    <<input::binary-size(glyphCount)-unit(16), 
+      laCount::16, la::binary-size(laCount)-unit(16),
+      substCount::16,
+      substRecs::binary-size(substCount)-unit(32), 
+      _::binary>> = rest
+
+    backtrack = for << <<g::16>> <- bt >>, do: g
+    lookahead = for << <<g::16>> <- la >>, do: g
+    input_glyphs = for << <<g::16>> <- input >>, do: g
+    substRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
+    {backtrack, input_glyphs, lookahead, substRecords}
+  end
+
+  defp applyContextSub1(_coverage, _rulesets, _lookups, [], output), do: output
+  defp applyContextSub1(coverage, rulesets, lookups, [g | glyphs], output) do
+    coverloc = findCoverageIndex(coverage, g)
+    {o, glyphs} = if coverloc != nil do
+      ruleset = Enum.at(rulesets, coverloc)
+      Logger.debug "GSUB5.1 rule = #{inspect ruleset}"
+      #find first match in this ruleset
+      # TODO: flag might mean we need to filter ignored categories
+      # ie; skip marks
+      rule = Enum.find(ruleset, fn {input, _} -> Enum.take(glyphs, length(input)) == input end)
+      if rule != nil do
+        {matched, substRecords} = rule
+        input = [g | matched]
+        replaced = substRecords
+        |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
+          candidate = Enum.at(acc, inputLoc)
+          lookup = Enum.at(lookups, lookupIndex)
+          [replacement | _] = applyLookupGSUB(lookup, nil, lookups, [candidate])
+          List.replace_at(acc, inputLoc, replacement)
+        end)
+        # skip over any matched glyphs
+        # TODO: handle flags correctly
+        # probably want to prepend earlier ignored glyphs to remaining
+        remaining = Enum.slice(glyphs, length(matched), length(glyphs))
+        {replaced, remaining}
+      else
+        {[g], glyphs}
+      end
+    else
+      {[g], glyphs}
+    end
+    output = output ++ o
+    applyContextSub1(coverage, rulesets, lookups, glyphs, output)
+  end
+
+  # class-based context
+  defp applyContextSub2(_coverage, _rulesets, _classes, _lookups, [], output), do: output
+  defp applyContextSub2(coverage, rulesets, classes, lookups, [g | glyphs], output) do
+    coverloc = findCoverageIndex(coverage, g)
+    ruleset = Enum.at(rulesets, classifyGlyph(g, classes))
+    {o, glyphs} = if coverloc != nil  and ruleset != nil do
+      Logger.debug "GSUB5.2 rule = #{inspect ruleset}"
+      #find first match in this ruleset
+      # TODO: flag might mean we need to filter ignored categories
+      # ie; skip marks
+      rule = Enum.find(ruleset, fn {input, _} ->
+                        candidates = glyphs
+                          |> Enum.take(length(input))
+                          |> Enum.map(fn g -> classifyGlyph(g, classes) end)
+                         candidates == input 
+                       end)
+      if rule != nil do
+        {matched, substRecords} = rule
+        input = [g | Enum.take(glyphs, length(matched))]
+        replaced = substRecords
+        |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
+          candidate = Enum.at(acc, inputLoc)
+          lookup = Enum.at(lookups, lookupIndex)
+          [replacement | _] = applyLookupGSUB(lookup, nil, lookups, [candidate])
+          List.replace_at(acc, inputLoc, replacement)
+        end)
+        # skip over any matched glyphs
+        # TODO: handle flags correctly
+        # probably want to prepend earlier ignored glyphs to remaining
+        remaining = Enum.slice(glyphs, length(matched), length(glyphs))
+        {replaced, remaining}
+      else
+        {[g], glyphs}
+      end
+    else
+      {[g], glyphs}
+    end
+    output = output ++ o
+    applyContextSub2(coverage, rulesets, classes, lookups, glyphs, output)
+  end
+
+  # handle class-based format for context chaining
+  defp applyChainingContextSub2(_coverage, _rulesets, _classes, _lookups, [], output), do: output
+  defp applyChainingContextSub2(coverage, rulesets, {btClasses, inputClasses, laClasses}, lookups, [g | glyphs], output) do
+    coverloc = findCoverageIndex(coverage, g)
+    ruleset = Enum.at(rulesets, classifyGlyph(g, inputClasses))
+    {o, glyphs} = if coverloc != nil  and ruleset != nil do
+      Logger.debug "GSUB6.2 rule = #{inspect ruleset}"
+      # find first match
+      # apply substitutions to input
+      {[g], glyphs}
+    else
+      {[g], glyphs}
+    end
+    output = output ++ o
+    applyChainingContextSub2(coverage, rulesets, {btClasses, inputClasses, laClasses}, lookups, glyphs, output)
   end
 
   # handle coverage-based format for context chaining
@@ -493,7 +700,7 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   #type 1 - single positioning
-  defp applyLookupGPOS({1, _flag, table}, gdef, {glyphs, pos}) do
+  defp applyLookupGPOS({1, _flag, table}, _gdef, {glyphs, pos}) do
     <<fmt::16, covOff::16, valueFormat::16, rest::binary>> = table
     coverage = parseCoverage(subtable(table, covOff))
     valSize = valueRecordSize(valueFormat)
@@ -519,7 +726,7 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   # type 2 - pair positioning (ie, kerning)
-  defp applyLookupGPOS({2, _flag, table}, gdef, {glyphs, pos}) do
+  defp applyLookupGPOS({2, _flag, table}, _gdef, {glyphs, pos}) do
     <<fmt::16, covOff::16, record1::16, record2::16, rest::binary>> = table
     kerning = case fmt do
       1 ->
@@ -567,7 +774,9 @@ defmodule Gutenex.PDF.TrueType do
     positioning = Enum.zip(pos, kerning) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
     {glyphs, positioning}
   end
-  defp applyLookupGPOS({3, _flag, table}, gdef, {glyphs, pos}) do
+
+  # type 3 - cursive positioning
+  defp applyLookupGPOS({3, _flag, _table}, _gdef, {glyphs, pos}) do
     #  flag:
     #  last glyph in sequence positioned on baseline (GPOS3 only)
     #  x2 ignore base glyphs (see GDEF)
@@ -576,9 +785,12 @@ defmodule Gutenex.PDF.TrueType do
     #  x10 useMarkFilteringSet (MarkFilteringSet field in lookup, xref GDEF)
     #  0xFF00 MarkAttachmentType (skip all but specified mark type, xref GDEF)
     Logger.debug "GPOS 3 - cursive"
+    {glyphs, pos}
   end
+
+  # type 4 - mark-to-base positioning
   defp applyLookupGPOS({4, flag, table}, gdef, {glyphs, pos}) do
-    <<fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
+    <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
     
     # coverage definitions
@@ -615,13 +827,17 @@ defmodule Gutenex.PDF.TrueType do
     positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
     {glyphs, positioning}
   end
-  defp applyLookupGPOS({5, _flag, table}, gdef, {glyphs, pos}) do
+
+  # type 5 - mark to ligature positioning
+  defp applyLookupGPOS({5, _flag, _table}, _gdef, {glyphs, pos}) do
     Logger.debug "GPOS 5 - mark to ligature"
     {glyphs, pos}
   end
+
+  # type 6 - mark to mark positioning
   defp applyLookupGPOS({6, flag, table}, gdef, {glyphs, pos}) do
     # same as format 4, except "base" is another mark
-    <<fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
+    <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
     
     markCoverage = parseCoverage(subtable(table, markCoverageOff))
@@ -649,14 +865,19 @@ defmodule Gutenex.PDF.TrueType do
     positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
     {glyphs, positioning}
   end
-  defp applyLookupGPOS({7, _flag, table}, gdef, {glyphs, pos}) do
+
+  # type 7 - contextual positioning
+  defp applyLookupGPOS({7, _flag, _table}, _gdef, {glyphs, pos}) do
     Logger.debug "GPOS 7 - context"
     {glyphs, pos}
   end
-  defp applyLookupGPOS({8, _flag, table}, gdef, {glyphs, pos}) do
+
+  # type 8 - chained contextual positioning
+  defp applyLookupGPOS({8, _flag, _table}, _gdef, {glyphs, pos}) do
     Logger.debug "GPOS 8 - chained context"
     {glyphs, pos}
   end
+
   #unhandled type; log and leave input untouched
   defp applyLookupGPOS({type, _flag, _table}, _gdef, {glyphs, pos}) do
     Logger.debug "Unknown GPOS lookup type #{type}"
