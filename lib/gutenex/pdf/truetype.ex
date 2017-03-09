@@ -41,8 +41,6 @@ defmodule Gutenex.PDF.OpenTypeFont do
 end
 
 defmodule Gutenex.PDF.TrueType do
-  use Bitwise, only_operators: true
-  require Logger
   alias Gutenex.OpenType.Parser
   alias Gutenex.OpenType.Substitutions
   alias Gutenex.OpenType.Positioning
