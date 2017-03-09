@@ -605,5 +605,62 @@ defmodule Gutenex.OpenType.Parser do
     ranges = for << <<first::16, last::16, class::16>> <- ranges >>, do: {first, last, class}
     ranges
   end
+
+  # parse coverage tables
+  def parseCoverage(<<1::16, nrecs::16, glyphs::binary-size(nrecs)-unit(16), _::binary>>) do
+    for << <<x::16>> <- glyphs >>, do: x
+  end
+  def parseCoverage(<<2::16, nrecs::16, ranges::binary-size(nrecs)-unit(48), _::binary>>) do
+    for << <<startg::16, endg::16, covindex::16>> <- ranges >>, do: {startg, endg, covindex}
+  end
+
+  def parseAlts(table, altOffset) do
+    <<nAlts::16, alts::binary-size(nAlts)-unit(16), _::binary>> = subtable(table, altOffset)
+    for << <<x::16>> <- alts >>, do: x
+  end
+
+  def parseLigatureSet(table, lsOffset) do
+    <<nrecs::16, ligat::binary-size(nrecs)-unit(16), _::binary>> = subtable(table, lsOffset)
+    ligaOff = for << <<x::16>> <- ligat >>, do: x
+    ligaOff
+    |> Enum.map(fn x -> subtable(table, lsOffset + x) end)
+    |> Enum.map(fn <<g::16, nComps::16, rest::binary>> ->  {g, nComps-1, rest} end)
+    |> Enum.map(fn {g, n, data} ->
+      <<recs::binary-size(n)-unit(16), _::binary>> = data
+      gg = for << <<x::16>> <- recs >>, do: x
+      {g, gg}
+    end)
+  end
+  def parseContextSubRule1(rule) do
+    <<nGlyphs::16, substCount::16, rest::binary>> = rule
+    # subtract one since initial glyph handled by coverage
+    glyphCount = nGlyphs - 1
+    <<input::binary-size(glyphCount)-unit(16), 
+      substRecs::binary-size(substCount)-unit(32), 
+      _::binary>> = rest
+
+    input_glyphs = for << <<g::16>> <- input >>, do: g
+    substRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
+    {input_glyphs, substRecords}
+  end
+
+  def parseChainedSubRule2(rule) do
+    <<btCount::16, bt::binary-size(btCount)-unit(16),
+    nGlyphs::16, rest::binary>> = rule
+    # subtract one since initial glyph handled by coverage
+    glyphCount = nGlyphs - 1
+    <<input::binary-size(glyphCount)-unit(16), 
+      laCount::16, la::binary-size(laCount)-unit(16),
+      substCount::16,
+      substRecs::binary-size(substCount)-unit(32), 
+      _::binary>> = rest
+
+    backtrack = for << <<g::16>> <- bt >>, do: g
+    lookahead = for << <<g::16>> <- la >>, do: g
+    input_glyphs = for << <<g::16>> <- input >>, do: g
+    substRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
+    {backtrack, input_glyphs, lookahead, substRecords}
+  end
+
 end
 
