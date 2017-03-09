@@ -662,5 +662,63 @@ defmodule Gutenex.OpenType.Parser do
     {backtrack, input_glyphs, lookahead, substRecords}
   end
 
+  def parseAnchor(<<_fmt::16, xCoord::signed-16, yCoord::signed-16, _rest::binary>>) do
+    # anchorTable (common table)
+    # coords are signed!
+    # fmt = 1, xCoord::16, yCoord::16
+    # fmt = 2, xCoord::16, yCoord::16, index to glyph countour point::16
+    # fmt = 3, xCoord::16, yCoord::16, device table offset (for x)::16, device table offset (for y)::16
+    {xCoord, yCoord}
+  end
+
+  def parseMarkArray(table) do
+    <<nRecs::16, records::binary-size(nRecs)-unit(32), _::binary>> = table
+    markArray = for << <<markClass::16, anchorTableOffset::16>> <- records >>, do: {markClass, anchorTableOffset}
+    markArray
+    |> Enum.map(fn {c,o} -> {c, parseAnchor(binary_part(table, o, byte_size(table) - o))} end)
+  end
+
+
+  def parsePairSet(table, offset, fmtA, fmtB) do
+    sizeA = valueRecordSize(fmtA)
+    sizeB = valueRecordSize(fmtB)
+    data = binary_part(table, offset, byte_size(table) - offset)
+    # valueRecordSize returns size in bytes
+    pairSize = (2 + sizeA + sizeB)
+    <<nPairs::16, pairdata::binary>> = data
+    pairs = for << <<glyph::16, v1::binary-size(sizeA), v2::binary-size(sizeB)>> <- binary_part(pairdata, 0, pairSize * nPairs) >>, do: {glyph, v1, v2}
+    pairs = pairs
+      |> Enum.map(fn {g,v1,v2} -> {g, readPositioningValueRecord(fmtA, v1), readPositioningValueRecord(fmtB, v2)} end)
+    pairs
+  end
+  # ValueRecord in spec
+  def readPositioningValueRecord(0, _), do: nil
+  def readPositioningValueRecord(format, bytes) do
+    # format is bitset of fields to read for each records
+    {xPlace, xprest} = extractValueRecordVal(format &&& 0x0001, bytes)
+    {yPlace, yprest} = extractValueRecordVal(format &&& 0x0002, xprest)
+    {xAdv, xarest} = extractValueRecordVal(format &&& 0x0004, yprest)
+    {yAdv, _xyrest} = extractValueRecordVal(format &&& 0x0008, xarest)
+
+    #TODO: also offsets to device table
+    {xPlace, yPlace, xAdv, yAdv}
+  end
+
+  defp extractValueRecordVal(_flag, ""), do: {0, ""}
+  defp extractValueRecordVal(flag, data) do
+    if flag != 0 do
+      <<x::signed-16, r::binary>> = data
+      {x, r}
+    else
+      {0, data}
+    end
+  end
+
+  def valueRecordSize(format) do
+    flags = for << x::1 <- <<format>> >>, do: x
+    # record size is 2 bytes per set flag in the format spec
+    Enum.count(flags, fn x -> x == 1 end) * 2
+  end
+
 end
 

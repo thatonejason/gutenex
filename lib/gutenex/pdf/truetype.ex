@@ -162,14 +162,6 @@ defmodule Gutenex.PDF.TrueType do
     Enum.reduce(lookups, glyphs, fn (x, acc) -> Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, acc) end)
   end
 
-  # parse coverage tables
-  defp parseCoverage(<<1::16, nrecs::16, glyphs::binary-size(nrecs)-unit(16), _::binary>>) do
-    for << <<x::16>> <- glyphs >>, do: x
-  end
-  defp parseCoverage(<<2::16, nrecs::16, ranges::binary-size(nrecs)-unit(48), _::binary>>) do
-    for << <<startg::16, endg::16, covindex::16>> <- ranges >>, do: {startg, endg, covindex}
-  end
-
   # given a glyph, find out the coverage index (can be nil)
   defp findCoverageIndex(cov, g) when is_integer(hd(cov)) do
     Enum.find_index(cov, fn i -> i == g end)
@@ -261,12 +253,12 @@ defmodule Gutenex.PDF.TrueType do
   #type 1 - single positioning
   defp applyLookupGPOS({1, _flag, table}, _gdef, {glyphs, pos}) do
     <<fmt::16, covOff::16, valueFormat::16, rest::binary>> = table
-    coverage = parseCoverage(subtable(table, covOff))
-    valSize = valueRecordSize(valueFormat)
+    coverage = Parser.parseCoverage(subtable(table, covOff))
+    valSize = Parser.valueRecordSize(valueFormat)
     adjusted = case fmt do
     1 ->
       <<val::binary-size(valSize), _::binary>> = rest
-      val = readPositioningValueRecord(valueFormat, val)
+      val = Parser.readPositioningValueRecord(valueFormat, val)
       Enum.map(glyphs, fn g ->
         coverloc = findCoverageIndex(coverage, g)
         if coverloc != nil, do: val, else: nil
@@ -274,7 +266,7 @@ defmodule Gutenex.PDF.TrueType do
     2 ->
       <<nVals::16, _::binary>> = rest
       recs = binary_part(rest, 16, nVals * valSize)
-      values = for << <<val::binary-size(valSize)>> <- recs >>, do: readPositioningValueRecord(valueFormat, val)
+      values = for << <<val::binary-size(valSize)>> <- recs >>, do: Parser.readPositioningValueRecord(valueFormat, val)
       Enum.map(glyphs, fn g ->
         coverloc = findCoverageIndex(coverage, g)
         if coverloc != nil, do: Enum.at(values, coverloc), else: nil
@@ -294,9 +286,9 @@ defmodule Gutenex.PDF.TrueType do
         <<nPairs::16, pairOff::binary-size(nPairs)-unit(16), _::binary>> = rest
         pairsetOffsets = for << <<x::16>> <- pairOff >>, do: x
         # coverage table
-        coverage = parseCoverage(subtable(table, covOff))
+        coverage = Parser.parseCoverage(subtable(table, covOff))
         # parse the pair sets
-        pairSets = Enum.map(pairsetOffsets, fn off -> parsePairSet(table, off, record1, record2) end)
+        pairSets = Enum.map(pairsetOffsets, fn off -> Parser.parsePairSet(table, off, record1, record2) end)
         applyKerning(coverage, pairSets, glyphs, [])
       2 ->
         #FMT 2
@@ -311,8 +303,8 @@ defmodule Gutenex.PDF.TrueType do
         # fmt==2, nRanges, {startGlyph, endGlyph, class}
 
         #read in the actual positioning pairs
-        sizeA = valueRecordSize(record1)
-        sizeB = valueRecordSize(record2)
+        sizeA = Parser.valueRecordSize(record1)
+        sizeB = Parser.valueRecordSize(record2)
         class2size = sizeA + sizeB
         class1size = nClass2Records * class2size
         c1recs = binary_part(records, 0, nClass1Records * class1size)
@@ -321,7 +313,7 @@ defmodule Gutenex.PDF.TrueType do
           c2Recs = for << <<c2Rec::binary-size(class2size)>> <- c2recs>>, do: c2Rec
           c2Recs
           |> Enum.map(fn c2Rec -> for << <<v1::binary-size(sizeA), v2::binary-size(sizeB)>> <- c2Rec >>, do: {v1, v2} end)
-          |> Enum.map(fn [{v1, v2}] -> {readPositioningValueRecord(record1, v1), readPositioningValueRecord(record2, v2)} end)
+          |> Enum.map(fn [{v1, v2}] -> {Parser.readPositioningValueRecord(record1, v1), Parser.readPositioningValueRecord(record2, v2)} end)
         end)
 
         #apply the kerning
@@ -353,8 +345,8 @@ defmodule Gutenex.PDF.TrueType do
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
     
     # coverage definitions
-    markCoverage = parseCoverage(subtable(table, markCoverageOff))
-    baseCoverage = parseCoverage(subtable(table, baseCoverageOff))
+    markCoverage = Parser.parseCoverage(subtable(table, markCoverageOff))
+    baseCoverage = Parser.parseCoverage(subtable(table, baseCoverageOff))
 
     # baseArray table
     baseTbl = subtable(table, baseArrayOffset)
@@ -367,12 +359,12 @@ defmodule Gutenex.PDF.TrueType do
     baseArray = records
               |> Enum.map(fn r -> for << <<offset::16>> <- r>>, do: offset end)
               |> Enum.map(&Enum.map(&1, fn o -> 
-                                parseAnchor(subtable(baseTbl, o)) end) 
+                                Parser.parseAnchor(Parser.subtable(baseTbl, o)) end) 
                         )
 
     # markArray table
     markArrayTbl = subtable(table, markArrayOffset)
-    markArray = parseMarkArray(markArrayTbl)
+    markArray = Parser.parseMarkArray(markArrayTbl)
 
     # mark attachment classes
     adjusted = applyMarkToBase(markCoverage, baseCoverage, 
@@ -399,8 +391,8 @@ defmodule Gutenex.PDF.TrueType do
     <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
     
-    markCoverage = parseCoverage(subtable(table, markCoverageOff))
-    baseCoverage = parseCoverage(subtable(table, baseCoverageOff))
+    markCoverage = Parser.parseCoverage(subtable(table, markCoverageOff))
+    baseCoverage = Parser.parseCoverage(subtable(table, baseCoverageOff))
     # baseArray table
     baseTbl = binary_part(table, baseArrayOffset, byte_size(table) - baseArrayOffset)
     <<nRecs::16, records::binary>> = baseTbl
@@ -413,11 +405,11 @@ defmodule Gutenex.PDF.TrueType do
     baseArray = records
               |> Enum.map(fn r -> for << <<offset::16>> <- r>>, do: offset end)
               |> Enum.map(&Enum.map(&1, fn o -> 
-                                parseAnchor(binary_part(baseTbl, o, 6)) end) 
+                                Parser.parseAnchor(binary_part(baseTbl, o, 6)) end) 
                         )
 
-    markArrayTbl = binary_part(table, markArrayOffset, byte_size(table) - markArrayOffset)
-    markArray = parseMarkArray(markArrayTbl)
+    markArrayTbl = Parser.subtable(table, markArrayOffset)
+    markArray = Parser.parseMarkArray(markArrayTbl)
 
     adjusted = applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, flag, gdef, [hd(glyphs)], tl(glyphs), pos, [nil])
     #Logger.debug "MKMK #{inspect glyphs} #{inspect adjusted}"
@@ -441,22 +433,6 @@ defmodule Gutenex.PDF.TrueType do
   defp applyLookupGPOS({type, _flag, _table}, _gdef, {glyphs, pos}) do
     Logger.debug "Unknown GPOS lookup type #{type}"
     {glyphs, pos}
-  end
-
-  defp parseAnchor(<<_fmt::16, xCoord::signed-16, yCoord::signed-16, _rest::binary>>) do
-    # anchorTable (common table)
-    # coords are signed!
-    # fmt = 1, xCoord::16, yCoord::16
-    # fmt = 2, xCoord::16, yCoord::16, index to glyph countour point::16
-    # fmt = 3, xCoord::16, yCoord::16, device table offset (for x)::16, device table offset (for y)::16
-    {xCoord, yCoord}
-  end
-
-  defp parseMarkArray(table) do
-    <<nRecs::16, records::binary-size(nRecs)-unit(32), _::binary>> = table
-    markArray = for << <<markClass::16, anchorTableOffset::16>> <- records >>, do: {markClass, anchorTableOffset}
-    markArray
-    |> Enum.map(fn {c,o} -> {c, parseAnchor(binary_part(table, o, byte_size(table) - o))} end)
   end
 
   defp classifyGlyph(_g, nil), do: 0
@@ -566,47 +542,5 @@ defmodule Gutenex.PDF.TrueType do
     end
     applyKerning(coverage, pairSets, glyphs, output)
   end
-
-  defp parsePairSet(table, offset, fmtA, fmtB) do
-    sizeA = valueRecordSize(fmtA)
-    sizeB = valueRecordSize(fmtB)
-    data = binary_part(table, offset, byte_size(table) - offset)
-    # valueRecordSize returns size in bytes
-    pairSize = (2 + sizeA + sizeB)
-    <<nPairs::16, pairdata::binary>> = data
-    pairs = for << <<glyph::16, v1::binary-size(sizeA), v2::binary-size(sizeB)>> <- binary_part(pairdata, 0, pairSize * nPairs) >>, do: {glyph, v1, v2}
-    pairs = pairs
-      |> Enum.map(fn {g,v1,v2} -> {g, readPositioningValueRecord(fmtA, v1), readPositioningValueRecord(fmtB, v2)} end)
-    pairs
-  end
-  # ValueRecord in spec
-  defp readPositioningValueRecord(0, _), do: nil
-  defp readPositioningValueRecord(format, bytes) do
-    # format is bitset of fields to read for each records
-    {xPlace, xprest} = extractValueRecordVal(format &&& 0x0001, bytes)
-    {yPlace, yprest} = extractValueRecordVal(format &&& 0x0002, xprest)
-    {xAdv, xarest} = extractValueRecordVal(format &&& 0x0004, yprest)
-    {yAdv, _xyrest} = extractValueRecordVal(format &&& 0x0008, xarest)
-
-    #TODO: also offsets to device table
-    {xPlace, yPlace, xAdv, yAdv}
-  end
-
-  defp extractValueRecordVal(_flag, ""), do: {0, ""}
-  defp extractValueRecordVal(flag, data) do
-    if flag != 0 do
-      <<x::signed-16, r::binary>> = data
-      {x, r}
-    else
-      {0, data}
-    end
-  end
-
-  defp valueRecordSize(format) do
-    flags = for << x::1 <- <<format>> >>, do: x
-    # record size is 2 bytes per set flag in the format spec
-    Enum.count(flags, fn x -> x == 1 end) * 2
-  end
-
 end
 
