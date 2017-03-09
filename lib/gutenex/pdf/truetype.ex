@@ -82,7 +82,7 @@ defmodule Gutenex.PDF.TrueType do
   end
 
   # returns a list of glyphs and positioning information
-  def layout_text(ttf, text, features \\ nil, script \\ "latn", lang \\ nil) do
+  def layout_text(ttf, text, features \\ nil, script \\ nil, lang \\ nil) do
 
     # use the font CMAP to convert the initial text 
     # into a series of glyphs
@@ -135,12 +135,6 @@ defmodule Gutenex.PDF.TrueType do
   def hasTable?(ttf, name) do
     Enum.any?(ttf.tables, fn(x) -> x.name == name end)
   end
-
-  # use this when the length of the actual subtable is unknown
-  def subtable(table, offset) do
-    binary_part(table, offset, byte_size(table) - offset)
-  end
-
 
   # subtitute ligatures, positional forms, stylistic alternates, etc
   # based upon the script, language, and active OpenType features
@@ -196,8 +190,8 @@ defmodule Gutenex.PDF.TrueType do
   # given a script and language, get the appropriate features
   # (falling back as appropriate)
   def getFeatures(scripts, script, lang) do
-    # Fallback to "DFLT" or "latn" script; else ignore all
-    selected_script = scripts[script] || scripts["DFLT"] || scripts["latn"] || %{}
+    # Fallback to "DFLT", "dflt", or "latn" script; else ignore all
+    selected_script = scripts[script]  || scripts["DFLT"] || scripts["dflt"] || scripts["latn"] || %{}
     # Fallback to nil (default) language for script
     selected_script[lang] || selected_script[nil] || []
   end
