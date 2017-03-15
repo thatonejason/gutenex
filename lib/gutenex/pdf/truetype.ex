@@ -44,6 +44,7 @@ defmodule Gutenex.PDF.TrueType do
   alias Gutenex.OpenType.Parser
   alias Gutenex.OpenType.Substitutions
   alias Gutenex.OpenType.Positioning
+  alias Gutenex.OpenType.Layout
 
   # empty structure with sensible defaults
   def new do
@@ -89,7 +90,11 @@ defmodule Gutenex.PDF.TrueType do
     |> Enum.map(fn(cid) -> Map.get(ttf.cid2gid, cid, 0) end)
 
     # detect script if not passed in
-    # script = layout.detect_script(text)
+    script = if script == nil do
+      Layout.detect_script(text)
+    else
+      script
+    end
     # shaper = layout.selectshaper(script)
     # {glyphs, glyph_features} = shaper.markLocalFeatures(glyphs)
     # opentype.substitutions(glyphs, font, script, lang, features, glyph_features)
