@@ -172,4 +172,27 @@ defmodule Gutenex.OpenType.Layout do
     script = if x == [], do: "Unknown", else: hd(x)
     script_to_tag(script)
   end
+
+
+  # need to implement universal shaping engine
+  # https://www.microsoft.com/typography/OpenTypeDev/USE/intro.htm
+  # clearly supports indic scripts
+  # probably best to split out arabic and/or BIDI
+  # dnom/numr seems to need special handling by a shaping engine
+  # some fonts seem to have issues with combining marks
+  # what about hangul? Usually seems to have own shaping rules
+
+  # arabic shaper -- use ArabicShaping.txt to pick correct form
+  # for each glyph
+  def shape_glyphs("arab", glyphs) do
+    output = glyphs
+    |> Enum.map(fn _ -> "isol" end)
+    features = ["isol", "medi", "init", "fina"]
+    {features, output}
+  end
+
+  # default shaper does nothing
+  def shape_glyphs(_script, glyphs) do
+    {[], nil}
+  end
 end

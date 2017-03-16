@@ -119,8 +119,11 @@ defmodule Gutenex.PDF.TrueType do
     # per OpenType spec, enable "palt" when "kern" is enabled
     features = if "kern" in features, do: ["palt" | features], else: features
 
+    # mark any per-glyph features
+    per_glyph_features = Layout.shape_glyphs(script, glyphs)
+
     glyphs
-    |> handle_substitutions(ttf, script, lang, features)
+    |> handle_substitutions(ttf, script, lang, features, per_glyph_features)
     |> position_glyphs(ttf, script, lang, features)
   end
 
@@ -141,7 +144,7 @@ defmodule Gutenex.PDF.TrueType do
 
   # subtitute ligatures, positional forms, stylistic alternates, etc
   # based upon the script, language, and active OpenType features
-  defp handle_substitutions(glyphs, ttf, script, lang, active_features) do
+  defp handle_substitutions(glyphs, ttf, script, lang, active_features, {per_glyph_features, per_glyph_assignments}) do
     # use data in GSUB to do any substitutions
     {scripts, subF, subL} = ttf.substitutions
 
@@ -156,8 +159,21 @@ defmodule Gutenex.PDF.TrueType do
                |> Enum.sort
                |> Enum.uniq
 
+    # per-glyph lookups
+    pgl = availableFeatures
+          |> Enum.map(fn x -> Enum.at(subF, x) end)
+          |> Enum.filter_map(fn {tag, _} -> tag in per_glyph_features end, fn {tag, l} -> for i <- l, do: {i,tag} end)
+          |> List.flatten
+          |> Map.new
+
     # apply the lookups and return the selected glyphs
-    Enum.reduce(lookups, glyphs, fn (x, acc) -> Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, acc) end)
+    Enum.reduce(lookups, glyphs, fn (x, acc) -> 
+                if pgl != nil and Map.has_key?(pgl, x) do
+                  Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, Map.get(pgl, x), per_glyph_assignments, acc)
+                else
+                  Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, nil, nil, acc)
+                end
+    end)
   end
 
   # adjusts positions of glyphs based on script, language, and OpenType features
