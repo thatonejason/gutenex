@@ -185,14 +185,19 @@ defmodule Gutenex.OpenType.Layout do
   # arabic shaper -- use ArabicShaping.txt to pick correct form
   # for each glyph
   def shape_glyphs("arab", glyphs) do
+    # look up shaping type of current glyph
+    # use previous glyph state + shaping type
+    # determine current state, possibly update previous state
+    # for example previous might change from fina to medi
+    # in order to join with current
     output = glyphs
     |> Enum.map(fn _ -> "isol" end)
-    features = ["isol", "medi", "init", "fina"]
+    features = ["isol", "medi", "init", "fina", "med2", "fin2", "fin3"]
     {features, output}
   end
 
   # default shaper does nothing
   def shape_glyphs(_script, glyphs) do
-    {[], nil}
+    {[], []}
   end
 end

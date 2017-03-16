@@ -9,7 +9,7 @@ defmodule Gutenex.OpenType.Substitutions do
     # simply passes through the input
   # ==============================================
   # GSUB 1 -- single substitution (one-for-one)
-  def applyLookupGSUB({1, flag, table}, _gdef, _lookups, tag, pga, glyphs) do
+  def applyLookupGSUB({1, _flag, table}, _gdef, _lookups, tag, pga, glyphs) do
     <<format::16, covOff::16, rest::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, covOff))
     replace = case format do
@@ -25,7 +25,6 @@ defmodule Gutenex.OpenType.Substitutions do
         fn g -> g end
     end
     if tag != nil do
-      IO.puts "per-glyph #{tag} lookup"
       glyphs
       |> Enum.with_index
       |> Enum.map(fn {x, i} -> {x, Enum.at(pga, i)} end)
@@ -58,7 +57,7 @@ defmodule Gutenex.OpenType.Substitutions do
   end
 
   # GSUB type 3 -- alternate substitution (one-for-one)
-  def applyLookupGSUB({3, _flag, _offsets, table}, _gdef, _, tag, _pga, glyphs) do
+  def applyLookupGSUB({3, _flag, _offsets, table}, _gdef, _, tag, pga, glyphs) do
     <<1::16, covOff::16, nAltSets::16, aoff::binary-size(nAltSets)-unit(16), _::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, covOff))
     # alternate set tables
@@ -67,7 +66,10 @@ defmodule Gutenex.OpenType.Substitutions do
     # TODO: seems like there's a way in unicode to specify alt??
     # More research required, for now substitute a random alt
     if tag != nil do
-      IO.puts "3 per-glyph #{tag} lookup"
+      glyphs
+      |> Enum.with_index
+      |> Enum.map(fn {x, i} -> {x, Enum.at(pga, i)} end)
+      |> Enum.map(fn {g, assignment} -> if assignment == tag, do: applyRandomAlt(g, coverage, alts), else: g end)
     end
     Enum.map(glyphs, fn g -> applyRandomAlt(g, coverage, alts) end)
   end
@@ -83,7 +85,7 @@ defmodule Gutenex.OpenType.Substitutions do
     # ligatures
     ligaOff = Enum.map(ls, fn lsOffset -> Parser.parseLigatureSet(table, lsOffset) end)
     if tag != nil do
-      IO.puts "4 per-glyph #{tag} lookup"
+      IO.puts "GSUB 4 per-glyph #{tag} lookup"
     end
     applyLigature(coverage, ligaOff, input, [])
   end
@@ -92,7 +94,7 @@ defmodule Gutenex.OpenType.Substitutions do
   def applyLookupGSUB({5, _flag, table}, _gdef, lookups, tag, _pga, glyphs) do
     <<format::16, details::binary>> = table
     if tag != nil do
-      IO.puts "5 per-glyph #{tag} lookup"
+      IO.puts "GSUB 5 per-glyph #{tag} lookup"
     end
     output = case format do
       1 ->
@@ -142,7 +144,7 @@ defmodule Gutenex.OpenType.Substitutions do
   #GSUB type 6 -- chained contextual substitution
   def applyLookupGSUB({6, _flag, table}, _gdef, lookups, tag, _pga, glyphs) do
     if tag != nil do
-      IO.puts "6 per-glyph #{tag} lookup"
+      IO.puts "GSUB 6 per-glyph #{tag} lookup"
     end
     <<format::16, details::binary>> = table
     output = case format do
@@ -194,30 +196,30 @@ defmodule Gutenex.OpenType.Substitutions do
   #GSUB type 7 -- extended table (handled below as it contains offset argument)
 
   #GSUB type 8 -- reverse chained contextual substitution
-  def applyLookupGSUB({8, _flag, _table}, _gdef, _, _pgl, _pga, glyphs) do
+  def applyLookupGSUB({8, _flag, _table}, _gdef, _, _tag, _pga, glyphs) do
     Logger.debug "GSUB 8 - reverse chaining substitution"
     glyphs
   end
 
   #unhandled type; log and leave input untouched
-  def applyLookupGSUB({type, _flag, _table}, _gdef, _, _pgl, _pga, glyphs) do
+  def applyLookupGSUB({type, _flag, _table}, _gdef, _, _tag, _pga, glyphs) do
     Logger.debug "Unknown GSUB lookup type #{type}"
     glyphs
   end
 
   # GSUB type 7 -- extended table
-  def applyLookupGSUB({7, flag, offsets, table}, gdef, lookups, pgl, pga, glyphs) do
+  def applyLookupGSUB({7, flag, offsets, table}, gdef, lookups, tag, pga, glyphs) do
     subtables = offsets
             |> Enum.map(fn x ->
             <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
             {lt, Parser.subtable(table, x + off)}
               end)
     #for each subtable
-    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, gdef, lookups, pgl, pga, input) end)
+    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, gdef, lookups, tag, pga, input) end)
   end
-  def applyLookupGSUB({type, flag, offsets, table}, gdef, lookups, pgl, pga, glyphs) do
+  def applyLookupGSUB({type, flag, offsets, table}, gdef, lookups, tag, pga, glyphs) do
     #for each subtable
-    Enum.reduce(offsets, glyphs, fn (offset, input) -> applyLookupGSUB({type, flag, Parser.subtable(table, offset)}, gdef, lookups, pgl, pga, input) end)
+    Enum.reduce(offsets, glyphs, fn (offset, input) -> applyLookupGSUB({type, flag, Parser.subtable(table, offset)}, gdef, lookups, tag, pga, input) end)
   end
 
   defp applySingleSub(g, coverage, delta) when is_integer(delta) do
