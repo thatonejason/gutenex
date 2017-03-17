@@ -182,18 +182,160 @@ defmodule Gutenex.OpenType.Layout do
   # some fonts seem to have issues with combining marks
   # what about hangul? Usually seems to have own shaping rules
 
-  # arabic shaper -- use ArabicShaping.txt to pick correct form
+  # used for cursive scripts -- Arabic, Syriac, N'Ko, Mongolian, etc
+  @external_resource shaping_path = Path.join([__DIR__, "ArabicShaping.txt"])
+  lines = File.stream!(shaping_path, [], :line)
+          |> Stream.filter(&String.match?(&1, ~r/^[0-9A-F]+/))
+  for line <- lines do
+    [cp, _, t, join_group] = String.split(line, ~r/[\#;]/)
+    cp = cp
+         |> String.trim
+         |> Integer.parse(16)
+         |> elem(0)
+    join_group = String.trim(join_group)
+
+    # use the join type unless in special-cased join group
+    t = if join_group in ["ALAPH", "DALATH RISH"] do
+      join_group
+    else
+      String.trim(t)
+    end
+    def arabic_shaping_from_codepoint(unquote(cp)) do
+      unquote(t)
+    end
+  end
+  def arabic_shaping_from_codepoint(_cp) do
+    "U"
+  end
+
+  #  Cursive scripts have the following join types:
+  #  R Right_Joining
+  #  L Left_Joining
+  #  D Dual_Joining
+  #  C Join_Causing
+  #  U Non_Joining
+  #  T Transparent
+  #
+  #  special joining rules for:
+  #  ALAPH
+  #  DALATH RISH
+  #  
+  def arabic_shaping([], _prev, output), do: Enum.reverse(output)
+
+  # start
+  def arabic_shaping([type | types], nil, []) do
+    curr = if type == "U", do: nil, else: "isol"
+    arabic_shaping(types, type, [curr])
+  end
+
+  # case A: previous is U
+  def arabic_shaping([type | types], "U", [prev | output]) do
+    curr = if type == "U", do: nil, else: "isol"
+    arabic_shaping(types, type, [curr, prev | output])
+  end
+
+  # case B: previous is DALATH RISH
+  def arabic_shaping([type | types], "DALATH RISH", [prev | output]) do
+    curr = case type do
+      "U" -> nil
+      "ALAPH" -> "fin3"
+      _ -> "isol"
+    end
+    arabic_shaping(types, type, [curr, prev | output])
+  end
+
+  # case C: previous is R
+  def arabic_shaping([type | types], "R", [prev | output]) do
+    curr = case type do
+      "U" -> nil
+      "ALAPH" -> "fin2"
+      _ -> "isol"
+    end
+    arabic_shaping(types, type, [curr, prev | output])
+  end
+
+  # case C.2: previous is ALAPH in isol form
+  def arabic_shaping([type | types], "ALAPH", ["isol" | output]) do
+    curr = case type do
+      "U" -> nil
+      "ALAPH" -> "fin2"
+      _ -> "isol"
+    end
+    arabic_shaping(types, type, [curr, "isol" | output])
+  end
+
+  # case D: previous is ALAPH in fina form
+  def arabic_shaping([type | types], "ALAPH", ["fina" | output]) do
+    {prev, curr} = case type do
+      "U" -> {"fina", nil}
+      "L" -> {"fina", "isol"}
+      "ALAPH" -> {"med2", "fin2"}
+      _ -> {"med2", "isol"}
+    end
+    arabic_shaping(types, type, [curr, prev | output])
+  end
+
+  # case E: previous is D or C in fina form
+  def arabic_shaping([type | types], prev_type, ["fina" | output]) when prev_type in ["D", "C"] do
+    {prev, curr} = case type do
+      "U" -> {"fina", nil}
+      "L" -> {"fina", "isol"}
+      _ -> {"medi", "fina"}
+    end
+    arabic_shaping(types, type, [curr, prev | output])
+  end
+
+  # case F: previous is D, C, or L in isol form
+  def arabic_shaping([type | types], prev_type, ["isol" | output]) when prev_type in ["D", "C", "L"] do
+    {prev, curr} = case type do
+      "U" -> {"isol", nil}
+      "L" -> {"isol", "isol"}
+      _ -> {"init", "fina"}
+    end
+    arabic_shaping(types, type, [curr, prev | output])
+  end
+
+  # case G: previous is ALAPH in fin2/fin3 form
+  def arabic_shaping([type | types], "ALAPH", [prev | output]) when prev in ["fin2", "fin3"] do
+    {prev, curr} = case type do
+      "U" -> {prev, nil}
+      "L" -> {prev, "isol"}
+      "ALAPH" -> {"isol", "fin2"}
+      _ -> {"isol", "isol"}
+    end
+    arabic_shaping(types, type, [curr, prev | output])
+  end
+
+  # transparent -- should be ignored by joining rules
+  # combining marks are an example as they are zero-width
+  def arabic_shaping(["T" | types], prev_type, [prev | output]) do
+    arabic_shaping(types, prev_type, [nil, prev | output])
+  end
+
+  # fallback -- do no shaping for current glyph
+  def arabic_shaping([type | types], prev_type, [prev | output]) do
+    arabic_shaping(types, type, [nil, prev | output])
+  end
+  #
   # for each glyph
-  def shape_glyphs("arab", glyphs) do
-    # look up shaping type of current glyph
-    # use previous glyph state + shaping type
-    # determine current state, possibly update previous state
-    # for example previous might change from fina to medi
-    # in order to join with current
-    output = glyphs
-    |> Enum.map(fn _ -> "isol" end)
+  def shape_glyphs("arab", text) do
+    # TODO: use glyphs as input rather than text
+    # convert back to unicode codepoints
     features = ["isol", "medi", "init", "fina", "med2", "fin2", "fin3"]
-    {features, output}
+
+    # look up shaping types
+    x = text
+        |> String.codepoints
+        |> Stream.map(fn <<x::utf8>> -> x end)
+        |> Stream.map(&arabic_shaping_from_codepoint(&1))
+    #TODO: get indices of T shapes
+    # remove T shapes
+        |> Enum.to_list
+
+    shaped = arabic_shaping(x, nil, [])
+    #TODO: insert nils at T indices
+
+    {features, shaped}
   end
 
   # default shaper does nothing

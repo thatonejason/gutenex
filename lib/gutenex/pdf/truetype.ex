@@ -120,7 +120,8 @@ defmodule Gutenex.PDF.TrueType do
     features = if "kern" in features, do: ["palt" | features], else: features
 
     # mark any per-glyph features
-    per_glyph_features = Layout.shape_glyphs(script, glyphs)
+    # TODO: shaper needs to work with glyphs
+    per_glyph_features = Layout.shape_glyphs(script, text)
 
     glyphs
     |> handle_substitutions(ttf, script, lang, features, per_glyph_features)
