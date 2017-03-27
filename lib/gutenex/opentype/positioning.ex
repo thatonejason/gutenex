@@ -121,6 +121,30 @@ defmodule Gutenex.OpenType.Positioning do
     #  x10 useMarkFilteringSet (MarkFilteringSet field in lookup, xref GDEF)
     #  0xFF00 MarkAttachmentType (skip all but specified mark type, xref GDEF)
     Logger.debug "GPOS 3 - cursive"
+    # format = 1
+    # coverage
+    # nrecords for anchor pairs -- in coverage order
+    # [entry anchor, exit anchor]
+    #
+    # curr = coverage(curr)
+    # next = coverage(next)
+    # get entry for next
+    # get exit for curr
+    # if ltr:
+    #   cur.xadv = exit.x + cur.xoff
+    #   d = entry.x + next.xoff
+    #   next.xadv -= d
+    #   next.xoff -= d
+    # else
+    #   d = exit.x + cur.xoff
+    #   cur.xadv -= d
+    #   cur.xoff -= d
+    #   next.xadv = entry.x + next.xoff
+    #
+    # if flag.rtl
+    #   cur.yoff = entry.y - exit.y
+    # else
+    #   cur.yoff = exit.y - entry.y
     {glyphs, pos}
   end
 

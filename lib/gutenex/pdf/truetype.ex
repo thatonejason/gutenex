@@ -204,7 +204,14 @@ defmodule Gutenex.PDF.TrueType do
                |> Enum.sort
                |> Enum.uniq
     # apply the lookups
-    Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, acc) end)
+    {g, p} = Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, acc) end)
+
+    #if script is RTL, reverse
+    if script == "arab" do
+      {Enum.reverse(g), Enum.reverse(p)}
+    else
+      {g, p}
+    end
   end
 
   # given a script and language, get the appropriate features

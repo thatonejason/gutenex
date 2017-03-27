@@ -316,8 +316,8 @@ defmodule Gutenex.OpenType.Layout do
   def arabic_shaping([type | types], prev_type, [prev | output]) do
     arabic_shaping(types, type, [nil, prev | output])
   end
-  #
-  # for each glyph
+
+  # shape arabic and other cursive scripts
   def shape_glyphs("arab", text) do
     # TODO: use glyphs as input rather than text
     # convert back to unicode codepoints
@@ -328,12 +328,24 @@ defmodule Gutenex.OpenType.Layout do
         |> String.codepoints
         |> Stream.map(fn <<x::utf8>> -> x end)
         |> Stream.map(&arabic_shaping_from_codepoint(&1))
-    #TODO: get indices of T shapes
-    # remove T shapes
         |> Enum.to_list
 
-    shaped = arabic_shaping(x, nil, [])
-    #TODO: insert nils at T indices
+    # record the locations of transparent (do not affect joining)
+    glyphs_T = x
+               |> Enum.with_index
+               |> Enum.filter(fn {n, _} -> n == "T" end)
+               |> Enum.map(fn {"T", i} -> i end)
+
+    # remove the transparent glyphs
+    trimmed = x
+              |> Enum.filter(fn n -> n != "T" end)
+
+    # do the shaping
+    shaped = arabic_shaping(trimmed, nil, [])
+
+    # transparent glyphs have no shape class, insert nil at appropriate locations
+    shaped = Enum.reduce(glyphs_T, shaped, fn i, acc -> List.insert_at(acc, i, nil) end)
+    IO.inspect shaped
 
     {features, shaped}
   end

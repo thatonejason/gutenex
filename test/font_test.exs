@@ -76,36 +76,33 @@ defmodule GutenexFontTest do
     # Qaf, Alef
     {glyphs, _} = TrueType.layout_text(ttf, "\u0642\u0627", ["ccmp"])
     # decompose QAF into QAFX and TWO_DOTS_ABOVE
-    assert glyphs == [889, 16, 858]
+    assert glyphs == [858, 16, 889]
   end
 
   test "Test positional substitutions" do
     ttf = TrueType.new
           |> TrueType.parse("./test/support/fonts/NotoNastaliqUrdu-Regular.ttf")
 
-    # TODO: this will require a proper arabic shaper
-    # without it the init/medi/fina/isol features
-    # are not sequenced properly
-
     # no substitutions
     {glyphs, _} = TrueType.layout_text(ttf, "\u0644", [])
     assert glyphs == [881]
 
-    # enable initial
-    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["init"])
-    #assert glyphs == [416]
-
-    # enable medial
-    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["medi"])
-    #assert glyphs == [441]
-
-    # enable final
-    {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["fina"])
-    #assert glyphs == [249]
-
     # enable isolation
     {glyphs, _} = TrueType.layout_text(ttf, "\u0644", ["isol"])
     assert glyphs == [248]
+
+    # standard shaping
+    # init, media, fina, isol
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0642\u0644\u0627\u06A9")
+    #assert glyphs == [304, 16, 249, 227, 901]
+
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0644\u0627\u06A9\u0642")
+    # init, fina, init, fina
+    #assert glyphs == [267, 279, 422, 391, 16]
+
+    {glyphs, _} = TrueType.layout_text(ttf, "\u0627\u06A9\u0642\u0644")
+    # isol, init, medi, fina
+    #assert glyphs == [227, 713, 460, 16, 881]
   end
 
   # turn OpenType features on and off in an integration test
@@ -162,6 +159,24 @@ defmodule GutenexFontTest do
 #|> Gutenex.write_text_br("f\u0300g\u0306\u0301u\u0302\u0307")
       |> Gutenex.end_text
       |> Gutenex.export("./tmp/diacratics.pdf")
+  end
+
+  @tag :integration
+  test "layout arabic text" do
+    File.rm("./tmp/arabic.pdf")
+    {:ok, ssp} = OpenTypeFont.start_link
+    OpenTypeFont.parse(ssp, "./test/support/fonts/NotoNastaliqUrdu-Regular.ttf")
+
+    {:ok, pid} = Gutenex.start_link
+    Gutenex.register_font(pid, "Urdu", ssp)
+      |> Gutenex.begin_text
+      |> Gutenex.text_leading(40)
+      |> Gutenex.text_position(180, 180)
+      |> Gutenex.set_font("Urdu", 32)
+      |> Gutenex.text_render_mode(:fill)
+      |> Gutenex.write_text_br("این قافلهٔ عُمر عجب میگذرد")
+      |> Gutenex.end_text
+      |> Gutenex.export("./tmp/arabic.pdf")
   end
 
   @tag :integration

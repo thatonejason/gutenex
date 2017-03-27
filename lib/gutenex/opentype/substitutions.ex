@@ -287,12 +287,12 @@ defmodule Gutenex.OpenType.Substitutions do
     coverloc = findCoverageIndex(coverage, g)
     {o, glyphs} = if coverloc != nil do
       ruleset = Enum.at(rulesets, coverloc)
-      Logger.debug "GSUB5.1 rule = #{inspect ruleset}"
       #find first match in this ruleset
       # TODO: flag might mean we need to filter ignored categories
       # ie; skip marks
       rule = Enum.find(ruleset, fn {input, _} -> Enum.take(glyphs, length(input)) == input end)
       if rule != nil do
+        # Logger.debug "GSUB5.1 rule = #{inspect rule}"
         {matched, substRecords} = rule
         input = [g | matched]
         replaced = substRecords
@@ -323,7 +323,7 @@ defmodule Gutenex.OpenType.Substitutions do
     coverloc = findCoverageIndex(coverage, g)
     ruleset = Enum.at(rulesets, classifyGlyph(g, classes))
     {o, glyphs} = if coverloc != nil  and ruleset != nil do
-      Logger.debug "GSUB5.2 rule = #{inspect ruleset}"
+      #Logger.debug "GSUB5.2 rule = #{inspect ruleset}"
       #find first match in this ruleset
       # TODO: flag might mean we need to filter ignored categories
       # ie; skip marks
@@ -364,15 +364,72 @@ defmodule Gutenex.OpenType.Substitutions do
     coverloc = findCoverageIndex(coverage, g)
     ruleset = Enum.at(rulesets, classifyGlyph(g, inputClasses))
     {o, glyphs} = if coverloc != nil  and ruleset != nil do
-      Logger.debug "GSUB6.2 rule = #{inspect ruleset}"
       # find first match
+      rule = Enum.find(ruleset, fn rule -> doesCCS2match(rule, {btClasses, inputClasses, laClasses}, output, g, glyphs) end)
       # apply substitutions to input
-      {[g], glyphs}
+      if rule != nil do
+        {_,im,_,substRecords} = rule
+        inputExtra = length(im) - 1
+        input = [g] ++ Enum.take(glyphs, inputExtra)
+        replaced = substRecords
+        |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
+          candidate = Enum.at(acc, inputLoc)
+          lookup = Enum.at(lookups, lookupIndex)
+          [replacement | _] = applyLookupGSUB(lookup, nil, lookups, nil, nil, [candidate])
+          List.replace_at(acc, inputLoc, replacement)
+        end)
+        # Logger.debug "GSUB6.2 rule = #{inspect input} =>  #{inspect replaced}"
+        {replaced, Enum.drop(glyphs, inputExtra)}
+      else
+        {[g], glyphs}
+      end
     else
       {[g], glyphs}
     end
     output = output ++ o
     applyChainingContextSub2(coverage, rulesets, {btClasses, inputClasses, laClasses}, lookups, glyphs, output)
+  end
+
+  defp doesCCS2match(rule, {btClasses, inputClasses, laClasses}, output, g, glyphs) do
+    {btMatch, inputMatch, laMatch, _} = rule
+    backtrack = length(btMatch)
+    inputExtra = length(inputMatch) - 1
+    lookahead = length(laMatch)
+
+    #not enough backtracking or lookahead to even attempt match
+    if length(output) < backtrack or length(glyphs) < lookahead + inputExtra do
+      false
+    else
+      #do we match the input
+      input = [g] ++ Enum.take(glyphs, inputExtra)
+      inputMatches = input
+                     |> Enum.zip(inputMatch)
+                     |> Enum.all?(fn {g, class} -> classifyGlyph(g, inputClasses) == class end)
+
+      #do we match backtracking?
+      backMatches = if backtrack > 0 do
+        output
+        |> Enum.reverse
+        |> Enum.take(backtrack)
+        |> Enum.zip(btMatch)
+        |> Enum.all?(fn {g, class} -> classifyGlyph(g, btClasses) == class end)
+      else
+        true
+      end
+
+      #do we match lookahead
+      laMatches = if lookahead > 0 do
+        glyphs
+        |> Enum.drop(inputExtra)
+        |> Enum.take(lookahead)
+        |> Enum.zip(laMatch)
+        |> Enum.all?(fn {g, class} -> classifyGlyph(g, laClasses) == class end)
+      else
+        true
+      end
+
+      inputMatches and backMatches and laMatches
+    end
   end
 
   # handle coverage-based format for context chaining
