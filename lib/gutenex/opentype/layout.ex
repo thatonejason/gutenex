@@ -345,7 +345,6 @@ defmodule Gutenex.OpenType.Layout do
 
     # transparent glyphs have no shape class, insert nil at appropriate locations
     shaped = Enum.reduce(glyphs_T, shaped, fn i, acc -> List.insert_at(acc, i, nil) end)
-    IO.inspect shaped
 
     {features, shaped}
   end

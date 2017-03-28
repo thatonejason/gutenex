@@ -94,15 +94,15 @@ defmodule GutenexFontTest do
     # standard shaping
     # init, media, fina, isol
     {glyphs, _} = TrueType.layout_text(ttf, "\u0642\u0644\u0627\u06A9")
-    #assert glyphs == [304, 16, 249, 227, 901]
+    assert glyphs == [901, 227, 249, 16, 304]
 
     {glyphs, _} = TrueType.layout_text(ttf, "\u0644\u0627\u06A9\u0642")
     # init, fina, init, fina
-    #assert glyphs == [267, 279, 422, 391, 16]
+    assert glyphs == [16, 391, 422, 279, 267]
 
     {glyphs, _} = TrueType.layout_text(ttf, "\u0627\u06A9\u0642\u0644")
     # isol, init, medi, fina
-    #assert glyphs == [227, 713, 460, 16, 881]
+    assert glyphs ==  [16, 460, 881, 717, 227]
   end
 
   # turn OpenType features on and off in an integration test
@@ -164,17 +164,19 @@ defmodule GutenexFontTest do
   @tag :integration
   test "layout arabic text" do
     File.rm("./tmp/arabic.pdf")
-    {:ok, ssp} = OpenTypeFont.start_link
-    OpenTypeFont.parse(ssp, "./test/support/fonts/NotoNastaliqUrdu-Regular.ttf")
+    {:ok, urdu} = OpenTypeFont.start_link
+    OpenTypeFont.parse(urdu, "./test/support/fonts/NotoNastaliqUrdu-Regular.ttf")
 
     {:ok, pid} = Gutenex.start_link
-    Gutenex.register_font(pid, "Urdu", ssp)
+    Gutenex.register_font(pid, "Urdu", urdu)
       |> Gutenex.begin_text
-      |> Gutenex.text_leading(40)
+      |> Gutenex.text_leading(48)
       |> Gutenex.text_position(180, 180)
       |> Gutenex.set_font("Urdu", 32)
       |> Gutenex.text_render_mode(:fill)
       |> Gutenex.write_text_br("این قافلهٔ عُمر عجب میگذرد")
+      |> Gutenex.write_text_br("\u0627\u06A9\u0642\u0644")
+      |> Gutenex.write_text_br("\u0627  \u06A9  \u0642  \u0644")
       |> Gutenex.end_text
       |> Gutenex.export("./tmp/arabic.pdf")
   end

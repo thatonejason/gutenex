@@ -25,6 +25,7 @@ defmodule Gutenex.OpenType.Substitutions do
         fn g -> g end
     end
     if tag != nil do
+      IO.puts "GSUB 1 per-glyph #{tag} lookup"
       glyphs
       |> Enum.with_index
       |> Enum.map(fn {x, i} -> {x, Enum.at(pga, i)} end)
@@ -66,6 +67,7 @@ defmodule Gutenex.OpenType.Substitutions do
     # TODO: seems like there's a way in unicode to specify alt??
     # More research required, for now substitute a random alt
     if tag != nil do
+      IO.puts "GSUB 3 per-glyph #{tag} lookup"
       glyphs
       |> Enum.with_index
       |> Enum.map(fn {x, i} -> {x, Enum.at(pga, i)} end)

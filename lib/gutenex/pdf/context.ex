@@ -25,12 +25,13 @@ defmodule Gutenex.PDF.Context do
     current_text_y: 0,
     features: [
         "ccmp", "locl", # preprocess (compose/decompose, local forms)
-        #"mark", "mkmk", # marks (mark-to-base, mark-to-mark)
+        "mark", "mkmk", "mset", # marks (mark-to-base, mark-to-mark, mark position via substitution)
         "clig", "liga", "rlig", # ligatures (contextual, standard, required)
         "calt", "rclt", # contextual alts (standard, required)
         "kern", # the "palt" feature will enable automatically if "kern" is on
         #"opbd", "lfbd", "rtbd", # optical bounds -- requires app support to identify bounding glyphs?
-        "curs", # cursive (required? for Arabic, useful for cursive latin)
+        "curs", # cursive (required; best tested with arabic font)
+        "isol", "fina", "medi", "init", # positional forms (required; best tested with arabic font)
       ],
     media_box: Page.page_size(:letter),
     generation_number: 0)

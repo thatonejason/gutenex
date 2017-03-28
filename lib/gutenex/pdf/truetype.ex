@@ -123,9 +123,11 @@ defmodule Gutenex.PDF.TrueType do
     # TODO: shaper needs to work with glyphs
     per_glyph_features = Layout.shape_glyphs(script, text)
 
-    glyphs
+    output = glyphs
     |> handle_substitutions(ttf, script, lang, features, per_glyph_features)
+    {output, pos} = output
     |> position_glyphs(ttf, script, lang, features)
+    {output, pos}
   end
 
   # discover the supported opentype features
@@ -203,11 +205,14 @@ defmodule Gutenex.PDF.TrueType do
                |> List.flatten
                |> Enum.sort
                |> Enum.uniq
+
+    # TODO: lookup this script in a map somewhere
+    isRTL = script == "arab"
     # apply the lookups
-    {g, p} = Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, acc) end)
+    {g, p} = Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
 
     #if script is RTL, reverse
-    if script == "arab" do
+    if isRTL do
       {Enum.reverse(g), Enum.reverse(p)}
     else
       {g, p}
