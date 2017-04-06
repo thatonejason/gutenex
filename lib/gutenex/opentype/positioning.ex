@@ -348,9 +348,41 @@ defmodule Gutenex.OpenType.Positioning do
 
     #TODO: probably need to skip marks
     skipCur = should_skip_glyph(g, flag, gdef)
+
+    #skipped = glyphs |> Enum.take_while(fn x -> should_skip_glyph(x, flag, gdef) end)
+    #numSkipped = length(skipped)
+    #glyphs = glyphs |> Enum.drop(numSkipped)
+    #[g2 | glyphs] = glyphs
+    #posSkipped = pos |> Enum.take(numSkipped)
+    #pos = pos |> Enum.drop(numSkipped)
+    #p2 = hd(pos)
+
+
+    # skipped = glyphs.take_while(should-skip)
+    # n = len(skipped)
+    #
+    # skipped_pos = pos.take(n)
+    # next = glyphs.drop(n)
+    # p2 = glyphs.drop(n)
+    skipped = []
+    pskipped = []
     skipNext = should_skip_glyph(g2, flag, gdef)
-    if skipNext, do: IO.puts "cursive skip next"
-    #skipCur = false
+    if skipNext do
+      gtemp = [g2 | glyphs]
+      ptemp = [p2 | pos]
+      skipped = gtemp |> Enum.take_while(fn x -> should_skip_glyph(x, flag, gdef) end)
+      numSkipped = length(skipped)
+      if numSkipped < length(gtemp) do 
+        pskipped = ptemp |> Enum.take(numSkipped)
+        [g2 | glyphs] = gtemp |> Enum.drop(numSkipped)
+        [p2 | pos] = ptemp |> Enum.drop(numSkipped)
+        IO.puts "cursive skip next #{inspect skipped}"
+      else
+        skipped = []
+        pskipped = []
+        skipCur = true
+      end
+    end
 
     curloc = findCoverageIndex(coverage, g)
     nextloc = findCoverageIndex(coverage, g2)
@@ -383,7 +415,7 @@ defmodule Gutenex.OpenType.Positioning do
       [p, p2]
     end
     #
-    applyCursive(coverage, anchorPairs, flag, gdef, isRTL, [g2 | glyphs], [next | pos], [cur | output])
+    applyCursive(coverage, anchorPairs, flag, gdef, isRTL, skipped ++ [g2 | glyphs], pskipped ++ [next | pos], [cur | output])
   end
 
   # class-based context
