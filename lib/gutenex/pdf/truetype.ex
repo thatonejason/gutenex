@@ -27,12 +27,19 @@ defmodule Gutenex.PDF.OpenTypeFont do
     GenServer.call(pid, :ttf)
   end
 
+  def scale_factor(pid) do
+    GenServer.call(pid, :scale)
+  end
+
   def handle_cast({:parse, filename}, ttf) do
     parsed = TrueType.parse(ttf, filename)
     {:noreply, parsed}
   end
   def handle_call(:ttf, _from, ttf) do
     {:reply, ttf, ttf}
+  end
+  def handle_call(:scale, _from, ttf) do
+    {:reply, 1000.0 / ttf.unitsPerEm, ttf}
   end
   def handle_call({:layout, text, features}, _from, ttf) do
     output = TrueType.layout_text(ttf, text, features)
@@ -209,7 +216,13 @@ defmodule Gutenex.PDF.TrueType do
     # TODO: lookup this script in a map somewhere
     isRTL = script == "arab"
     # apply the lookups
-    {g, p} = Enum.reduce(indices, {glyphs, positions}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
+    # returns glyphs, positioning, cursive attachments, mark attachments
+    cursiveDeltas = List.duplicate(0, length(glyphs))
+    {g, p, cDeltas, _} = Enum.reduce(indices, {glyphs, positions, cursiveDeltas, []}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
+    # make cursive and mark positioning adjustments
+    # first apply any cursive adjustments
+    {p, deltas} = Positioning.adjustCursiveOffset(p, cDeltas)
+    # then apply any mark adjustments
 
     #if script is RTL, reverse
     if isRTL do

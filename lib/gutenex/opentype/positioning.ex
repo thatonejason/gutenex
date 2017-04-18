@@ -19,24 +19,24 @@ defmodule Gutenex.OpenType.Positioning do
   # ==============================================
 
   # type 9 - when 32-bit offsets are used for subtables
-  def applyLookupGPOS({9, flag, offsets, table}, gdef, lookups, isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({9, flag, offsets, table}, gdef, lookups, isRTL, {glyphs, pos, c, m}) do
     subtables = offsets
             |> Enum.map(fn x ->
             <<1::16, actual_type::16, off::32>> = binary_part(table, x, 8)
             {actual_type, Parser.subtable(table, x + off)}
               end)
     #for each subtable
-    Enum.reduce(subtables, {glyphs, pos}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, tbl}, gdef, lookups, isRTL, input) end)
+    Enum.reduce(subtables, {glyphs, pos, c, m}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, tbl}, gdef, lookups, isRTL, input) end)
   end
 
   # all other types
-  def applyLookupGPOS({type, flag, offsets, table}, gdef, lookups, isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({type, flag, offsets, table}, gdef, lookups, isRTL, {glyphs, pos, c, m}) do
     #for each subtable
-    Enum.reduce(offsets, {glyphs, pos}, fn (offset, input) -> applyLookupGPOS({type, flag, Parser.subtable(table, offset)}, gdef, lookups, isRTL, input) end)
+    Enum.reduce(offsets, {glyphs, pos, c, m}, fn (offset, input) -> applyLookupGPOS({type, flag, Parser.subtable(table, offset)}, gdef, lookups, isRTL, input) end)
   end
 
   #type 1 - single positioning
-  def applyLookupGPOS({1, _flag, table}, _gdef, _lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({1, _flag, table}, _gdef, _lookups, _isRTL, {glyphs, pos, c, m}) do
     <<fmt::16, covOff::16, valueFormat::16, rest::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, covOff))
     valSize = Parser.valueRecordSize(valueFormat)
@@ -58,11 +58,11 @@ defmodule Gutenex.OpenType.Positioning do
       end)
     end
     positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    {glyphs, positioning}
+    {glyphs, positioning, c, m}
   end
 
   # type 2 - pair positioning (ie, kerning)
-  def applyLookupGPOS({2, _flag, table}, _gdef,_lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({2, _flag, table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     <<fmt::16, covOff::16, record1::16, record2::16, rest::binary>> = table
     kerning = case fmt do
       1 ->
@@ -108,11 +108,11 @@ defmodule Gutenex.OpenType.Positioning do
         applyKerning2(class1, class2, pairSets, glyphs, [])
     end
     positioning = Enum.zip(pos, kerning) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    {glyphs, positioning}
+    {glyphs, positioning, c, m}
   end
 
   # type 3 - cursive positioning
-  def applyLookupGPOS({3, flag, table}, gdef, _lookups, isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({3, flag, table}, gdef, _lookups, isRTL, {glyphs, pos, c, m}) do
     <<_fmt::16, coverageOff::16, nAnchorPairs::16, nrecs::binary-size(nAnchorPairs)-unit(32), _::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, coverageOff))
     records = for << <<entryAnchor::16, exitAnchor::16>> <- nrecs >>, do: {entryAnchor, exitAnchor}
@@ -123,13 +123,17 @@ defmodule Gutenex.OpenType.Positioning do
                     {entryAnchor, exitAnchor}
                   end)
 
-    # adjust directly when aligning entry/exit points
-    positioning = applyCursive(coverage, anchorPairs, flag, gdef, isRTL, glyphs, pos, [])
-    {glyphs, positioning}
+    # align entry/exit points
+    {p, d} = applyCursive(coverage, anchorPairs, flag, gdef, isRTL, glyphs, pos, [], [])
+    #Logger.debug "CURSIVE #{inspect glyphs} #{inspect d}"
+    cdeltas = c
+          |> Enum.with_index
+          |> Enum.map(fn {v, i} -> if v != 0, do: v, else: Enum.at(d, i) end)
+    {glyphs, p, cdeltas, m}
   end
 
   # type 4 - mark-to-base positioning
-  def applyLookupGPOS({4, flag, table}, gdef,_lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({4, flag, table}, gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
     
@@ -165,11 +169,11 @@ defmodule Gutenex.OpenType.Positioning do
 
     # apply the adjustments to positioning
     positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    {glyphs, positioning}
+    {glyphs, positioning, c, m}
   end
 
   # type 5 - mark to ligature positioning
-  def applyLookupGPOS({5, _flag, table}, _gdef,_lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({5, _flag, table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     # same as format 4, except "base" is a ligature with (possibly) multiple anchors
     <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
@@ -181,11 +185,11 @@ defmodule Gutenex.OpenType.Positioning do
     markArray = Parser.parseMarkArray(markArrayTbl)
 
     Logger.debug "GPOS 5 - mark to ligature"
-    {glyphs, pos}
+    {glyphs, pos, c, m}
   end
 
   # type 6 - mark to mark positioning
-  def applyLookupGPOS({6, flag, table}, gdef,_lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({6, flag, table}, gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     # same as format 4, except "base" is another mark
     <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
@@ -213,11 +217,11 @@ defmodule Gutenex.OpenType.Positioning do
     adjusted = applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, flag, gdef, [hd(glyphs)], tl(glyphs), pos, [nil])
     #Logger.debug "MKMK #{inspect glyphs} #{inspect adjusted}"
     positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    {glyphs, positioning}
+    {glyphs, positioning, c, m}
   end
 
   # type 7 - contextual positioning
-  def applyLookupGPOS({7, _flag, table}, gdef, lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({7, _flag, table}, gdef, lookups, _isRTL, {glyphs, pos, c, m}) do
     <<format::16, details::binary>> = table
     pos = case format do
       1 ->
@@ -251,19 +255,19 @@ defmodule Gutenex.OpenType.Positioning do
         Logger.debug "GSUB 7 - contextual positioning format #{format}"
         pos
     end
-    {glyphs, pos}
+    {glyphs, pos, c, m}
   end
 
   # type 8 - chained contextual positioning
-  def applyLookupGPOS({8, _flag, _table}, _gdef,_lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({8, _flag, _table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     Logger.debug "GPOS 8 - chained context"
-    {glyphs, pos}
+    {glyphs, pos, c, m}
   end
 
   #unhandled type; log and leave input untouched
-  def applyLookupGPOS({type, _flag, _table}, _gdef,_lookups, _isRTL, {glyphs, pos}) do
+  def applyLookupGPOS({type, _flag, _table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     Logger.debug "Unknown GPOS lookup type #{type}"
-    {glyphs, pos}
+    {glyphs, pos, c, m}
   end
 
   defp applyMarkToBase(_markCoverage, _baseCoverage, _baseArray, _markArray, _lookupFlag, _gdef, _prev, [], _, output), do: Enum.reverse(output)
@@ -286,8 +290,9 @@ defmodule Gutenex.OpenType.Positioning do
       # get the base positioning
       {_, box, boy, bax, bay} = prev_pos
       # mark_offset = (base_offset + offset - base_advance)
-      #Logger.debug "OFFSET #{off_x} base #{base_x} mark #{mark_x} less #{bax}"
-      {box + off_x - bax, boy + off_y - bay, 0, 0}
+      # Logger.debug "OFFSET #{off_x} base #{base_x} mark #{mark_x} less #{bax}"
+      #{box + off_x - bax, boy + off_y - bay, 0, 0}
+      {box + off_x, boy + off_y, 0, 0}
     else
       nil
     end
@@ -340,30 +345,14 @@ defmodule Gutenex.OpenType.Positioning do
     applyKerning(coverage, pairSets, glyphs, output)
   end
 
-  defp applyCursive(_coverage, _anchorPairs, _flag, _gdef, _isRTL,  [], [], output), do: Enum.reverse(output)
-  defp applyCursive(_coverage, _anchorPairs, _flag, _gdef, _isRTL,  [_], [p], output), do: Enum.reverse([p | output])
-  defp applyCursive(coverage, anchorPairs, flag, gdef, isRTL, [g, g2 | glyphs], [p, p2 | pos], output) do
+  defp applyCursive(_coverage, _anchorPairs, _flag, _gdef, _isRTL,  [], [], output, deltas), do: {Enum.reverse(output), Enum.reverse(deltas)}
+  defp applyCursive(_coverage, _anchorPairs, _flag, _gdef, _isRTL,  [_], [p], output, deltas), do: {Enum.reverse([p | output]), Enum.reverse([0 | deltas])}
+  defp applyCursive(coverage, anchorPairs, flag, gdef, isRTL, [g, g2 | glyphs], [p, p2 | pos], output, deltas) do
     # decompose the flag
     <<_attachmentType::8, _::3, _useMark::1, _ignoreMark::1, _ignoreLig::1, _ignoreBase::1, rtl::1>> = <<flag::16>>
 
-    #TODO: probably need to skip marks
     skipCur = should_skip_glyph(g, flag, gdef)
 
-    #skipped = glyphs |> Enum.take_while(fn x -> should_skip_glyph(x, flag, gdef) end)
-    #numSkipped = length(skipped)
-    #glyphs = glyphs |> Enum.drop(numSkipped)
-    #[g2 | glyphs] = glyphs
-    #posSkipped = pos |> Enum.take(numSkipped)
-    #pos = pos |> Enum.drop(numSkipped)
-    #p2 = hd(pos)
-
-
-    # skipped = glyphs.take_while(should-skip)
-    # n = len(skipped)
-    #
-    # skipped_pos = pos.take(n)
-    # next = glyphs.drop(n)
-    # p2 = glyphs.drop(n)
     skipped = []
     pskipped = []
     skipNext = should_skip_glyph(g2, flag, gdef)
@@ -376,7 +365,7 @@ defmodule Gutenex.OpenType.Positioning do
         pskipped = ptemp |> Enum.take(numSkipped)
         [g2 | glyphs] = gtemp |> Enum.drop(numSkipped)
         [p2 | pos] = ptemp |> Enum.drop(numSkipped)
-        IO.puts "cursive skip next #{inspect skipped}"
+        #IO.puts "cursive skip next #{inspect skipped}"
       else
         skipped = []
         pskipped = []
@@ -389,7 +378,7 @@ defmodule Gutenex.OpenType.Positioning do
 
 
     # if glyphs are covered
-    [cur, next] = if curloc != nil and nextloc != nil and !skipCur do
+    [cur, next, gdelta] = if curloc != nil and nextloc != nil and !skipCur do
       {entryA, _} = Enum.at(anchorPairs, nextloc)
       {_, exitA} = Enum.at(anchorPairs, curloc)
       if exitA != nil and entryA != nil do
@@ -398,24 +387,48 @@ defmodule Gutenex.OpenType.Positioning do
         {_, xOff, yOff, xAdv, yAdv} = p
         {_, x2Off, y2Off, x2Adv, y2Adv} = p2
         delta_y = if rtl, do: entry_y - exit_y, else: exit_y - entry_y
-        #assume RTL but should be if here
+        index_delta = length(skipped) + 1
+
+
         if isRTL do
           delta_x = exit_x + xOff
-          Logger.debug "GPOS 3 - cursive RTL delta #{inspect delta_x}, #{inspect delta_y}"
-          [{:pos, xOff - delta_x, delta_y, xAdv - delta_x, yAdv}, {:pos, x2Off, y2Off, entry_x + x2Off, y2Adv}]
+          # post-process -- our yOffset needs to be adjusted by next yOffset
+          # Logger.debug "GPOS 3 - cursive RTL delta #{inspect delta_x}, #{inspect delta_y}"
+          [{:pos, xOff - delta_x, delta_y, xAdv - delta_x, yAdv}, {:pos, x2Off, y2Off, entry_x + x2Off, y2Adv}, index_delta]
         else
           delta_x = entry_x + x2Off
-          Logger.debug "GPOS 3 - cursive LTR delta #{inspect delta_x}, #{inspect delta_y}"
-          [{:pos, xOff, delta_y, exit_x + xOff, yAdv}, {:pos, x2Off - delta_x, y2Off, x2Adv - delta_x, y2Adv}]
+          # post-process -- next needs to adjust yOffset by our yOffset
+          #Logger.debug "GPOS 3 - cursive LTR delta #{inspect delta_x}, #{inspect delta_y}"
+          [{:pos, xOff, delta_y, exit_x + xOff, yAdv}, {:pos, x2Off - delta_x, y2Off, x2Adv - delta_x, y2Adv}, -index_delta]
         end
       else
-        [p, p2]
+        [p, p2, 0]
       end
     else
-      [p, p2]
+      [p, p2, 0]
     end
-    #
-    applyCursive(coverage, anchorPairs, flag, gdef, isRTL, skipped ++ [g2 | glyphs], pskipped ++ [next | pos], [cur | output])
+    # TODO: yOffset needs to be culmulative for connected glyphs!
+    # hmm... could be multiple passes (assume one for now?)
+    applyCursive(coverage, anchorPairs, flag, gdef, isRTL, skipped ++ [g2 | glyphs], pskipped ++ [next | pos], [cur | output], [gdelta | deltas])
+  end
+
+  def adjustCursiveOffset(positions, deltas) do
+    0..length(deltas)-1
+    |> Enum.reduce({positions, deltas}, fn (x, {p, d}) -> adjustCursiveOffsets(x, p, d) end)
+  end
+  def adjustCursiveOffsets(index, positions, deltas) do
+    d = Enum.at(deltas, index)
+    if d == 0 do
+      {positions, deltas}
+    else
+      next = index + d
+      {p2, d2} = adjustCursiveOffsets(next, positions, List.replace_at(deltas, index, 0))
+      {type, xo, yo, xa, ya} = Enum.at(p2, index)
+      {_, _, yo2, _, _} = Enum.at(p2, next)
+
+      {List.replace_at(p2, index, {type, xo, yo + yo2, xa, ya}), d2}
+    end
+
   end
 
   # class-based context

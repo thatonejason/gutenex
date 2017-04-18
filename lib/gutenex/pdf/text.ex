@@ -95,12 +95,49 @@ defmodule Gutenex.PDF.Text do
     "#{spacing} TL\n"
   end
 
-  def write_positioned_glyphs({glyphs, positions}, font_size) do
+  def write_positioned_glyphs({glyphs, positions}, scale) do
     #TODO: if there is no y positioning/advance can reduce to TJ directive
     #TODO: if no xpos and xadvance == width can group together
     pos_g = Enum.zip(glyphs, positions)
-            |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, font_size / 1000) end)
+    |> Enum.chunk_by(fn {_, {t, _, _, _, _}} -> t end)
+    |> Enum.map_join(" ", fn c -> write_chunk(c, scale / 1000) end)
+#pos_g = Enum.zip(glyphs, positions)
+#            |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, font_size / 1000) end)
     pos_g <> "\n"
+  end
+  
+  defp write_chunk([c | chunks], scale) do
+    {_, {t, _, _, _, _}} = c
+    a = [c | chunks]
+    case t do
+      :std_width -> write_run(t, a)
+      :kern -> write_run(t, a, scale)
+      :pos -> write_run(t, a, scale)
+      _ -> ""
+    end
+  end
+
+  defp write_run(:std_width, run) do
+    hex = run
+    |> Enum.map_join("", fn {g, _} ->
+      Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+    end)
+    "<#{hex}> Tj"
+  end
+
+  defp write_run(:kern, run, scale) do
+    hex = run
+    |> Enum.map_join(" ", fn {g, {:kern, _, _, xa, _}} ->
+      h = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+      w = trunc(xa * scale) |> Integer.to_string
+      "<#{h}> #{w}"
+    end)
+    "[#{hex}] TJ"
+  end
+
+  defp write_run(:pos, run, scale) do
+    run
+    |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, scale) end)
   end
 
   defp position_glyph(g, pos, scale) do

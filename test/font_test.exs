@@ -2,6 +2,20 @@ defmodule GutenexFontTest do
   use ExUnit.Case
   alias Gutenex.PDF.TrueType, as: TrueType
   alias Gutenex.PDF.OpenTypeFont
+  alias Gutenex.OpenType.Layout
+
+  # generate a HarfBuzz-style string
+  # this allows us to re-use HarfBuzz shaping tests
+  def harfbuzz(glyphs, pos) do
+    Enum.zip(glyphs, pos)
+    |> Enum.map_join("|", fn {g, {_, xoff, yoff, xadv, _}} ->
+      if xoff != 0 or yoff != 0 do
+        "#{g}@#{xoff},#{yoff}+#{xadv}"
+      else
+        "#{g}+#{xadv}"
+      end
+    end)
+  end
 
   test "parse Truetype font metrics" do
     ttf = TrueType.new
@@ -105,6 +119,34 @@ defmodule GutenexFontTest do
     assert glyphs ==  [16, 460, 881, 717, 227]
   end
 
+  test "Urdu cursive" do
+    ttf = TrueType.new
+          |> TrueType.parse("./test/support/fonts/NotoNastaliqUrdu-Regular.ttf")
+
+    s = Layout.detect_script("\u062D\u062D\u062D\u062D\u062D\u062D\u0628")
+    assert s == "arab"
+
+    {glyphs, pos} = TrueType.layout_text(ttf, "\u062D\u062D\u062D\u062D\u062D\u062D\u0628")
+    hb = harfbuzz(glyphs, pos)
+    assert hb == ""
+    assert glyphs ==  [18, 460, 881, 717, 227]
+  end
+
+  test "cursive tests" do
+    borrow_harfbuzz_test("./test/support/fonts/sha1sum/c4e48b0886ef460f532fb49f00047ec92c432ec0.ttf",
+                         "\u0643\u0645\u0645\u062B\u0644",
+                         "8+738|5@441,1197+0|6@0,432+405|9@0,477+452|9@0,977+452|10@20,1577+207")
+  end
+  def borrow_harfbuzz_test(font, text, expected) do
+    ttf = TrueType.new
+          |> TrueType.parse(font)
+    s = Layout.detect_script(text)
+    assert s == "arab"
+    {glyphs, pos} = TrueType.layout_text(ttf, text)
+    hb = harfbuzz(glyphs, pos)
+    assert hb == expected
+  end
+
   # turn OpenType features on and off in an integration test
   @tag :integration
   test "Turn OpenType features on and off" do
@@ -172,11 +214,12 @@ defmodule GutenexFontTest do
       |> Gutenex.begin_text
       |> Gutenex.text_leading(48)
       |> Gutenex.text_position(180, 180)
-      |> Gutenex.set_font("Urdu", 32)
+      |> Gutenex.set_font("Urdu", 16)
       |> Gutenex.text_render_mode(:fill)
       |> Gutenex.write_text_br("این قافلهٔ عُمر عجب میگذرد")
       |> Gutenex.write_text_br("\u0627\u06A9\u0642\u0644")
       |> Gutenex.write_text_br("\u0627  \u06A9  \u0642  \u0644")
+      |> Gutenex.write_text_br("\u062D\u062D\u062D\u062D\u062D\u062D\u0628")
       |> Gutenex.end_text
       |> Gutenex.export("./tmp/arabic.pdf")
   end

@@ -40,6 +40,8 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     cmapc = RenderContext.next_index(ec)
     cmapo = RenderContext.current_object(cmapc)
     cmapr = RenderContext.current_reference(cmapc)
+    # scale to PDF expectations of 1000 units per em
+    scale = 1000.0 / ttf.unitsPerEm
     # set up info
     base_font = %{
       "Type" => {:name, "Font"},
@@ -56,8 +58,8 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
       "BaseFont" => {:name, ttf.name},
       "CIDSystemInfo" => {:dict, %{"Ordering" => "Identity", "Registry" => "Adobe", "Supplement" => 0} },
       "FontDescriptor" => der,
-      "DW" => ttf.defaultWidth,
-      "W" => glyph_widths(ttf)
+      "DW" => trunc(ttf.defaultWidth * scale),
+      "W" => glyph_widths(ttf, scale)
     }
     ffkey = if ttf.isCFF, do: "FontFile3", else: "FontFile2"
     metrics = %{
@@ -65,12 +67,12 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
       "FontName" => {:name, ttf.name},
       "FontWeight" => ttf.usWeightClass,
       "Flags" => ttf.flags,
-      "FontBBox" => {:rect, ttf.bbox},
+      "FontBBox" => {:rect, ttf.bbox |> Enum.map(fn x -> trunc(x * scale) end)},
       "ItalicAngle" => ttf.italicAngle,
-      "Ascent" => ttf.ascent,
-      "Descent" => ttf.descent,
-      "CapHeight" => ttf.capHeight,
-      "StemV" => ttf.stemV,
+      "Ascent" => trunc(ttf.ascent * scale),
+      "Descent" => trunc(ttf.descent * scale),
+      "CapHeight" => trunc(ttf.capHeight * scale),
+      "StemV" => trunc(ttf.stemV * scale),
       ffkey => er
     }
 
@@ -123,19 +125,20 @@ defmodule Gutenex.PDF.Builders.FontBuilder do
     ]
   end
 
-  defp glyph_widths(ttf) do
+  defp glyph_widths(ttf, scale) do
     {b, _, :end} = ttf.glyphWidths ++ [:end]
     |> Enum.with_index
     |> Enum.reduce({[], 0, 0}, fn({w, gid}, {buckets, lg, lw}) -> bucketWidth(gid, w, buckets, lg, lw) end)
-    cw = b |> Enum.reduce([], fn(x, acc) -> fmtb(x, acc) end)
+    cw = b |> Enum.reduce([], fn(x, acc) -> fmtb(x, scale, acc) end)
     {:array, cw}
   end
 
-  def fmtb({s,w}, output) do
+  def fmtb({s,w}, scale, output) do
+    w = w |> Enum.map(fn x -> trunc(x * scale) end)
     [s, {:array, w}] ++ output
   end
-  def fmtb({s,e,w}, output) do
-    [s,e,w] ++ output
+  def fmtb({s,e,w}, scale, output) do
+    [s,e,trunc(w * scale)] ++ output
   end
 
   def bucketWidth(gid, width, [], 0, _) do

@@ -328,8 +328,9 @@ defmodule Gutenex do
   """
   def handle_cast({:text, :write, text_to_write}, [context, stream]) do
     stream = if is_pid(context.current_font) do
+      scale = OpenTypeFont.scale_factor(context.current_font)
       output = OpenTypeFont.layout(context.current_font, text_to_write, context.features)
-               |>Text.write_positioned_glyphs(context.current_font_size)
+               |>Text.write_positioned_glyphs(context.current_font_size * scale)
       stream <> output
     else
       stream <> Text.write_text(text_to_write)

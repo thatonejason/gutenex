@@ -92,6 +92,7 @@ defmodule Gutenex.OpenType.Parser do
   # read in the name table and select a name
   def extractName(ttf, data) do
     raw = rawTable(ttf, "name", data)
+    if raw do
     <<_fmt::16, nRecords::16, strOffset::16, r::binary>> = raw
     #IO.puts "Name table format #{fmt}"
     recs = readNameRecords([], r, nRecords)
@@ -131,6 +132,9 @@ defmodule Gutenex.OpenType.Parser do
     #self.fullName = names[4] or psName
     #self.uniqueFontID = names[3] or psName
     %{ttf | name: psName}
+    else
+    %{ttf | name: "NO-VALID-NAME"}
+    end
   end
 
   # read in the font tables
@@ -210,14 +214,18 @@ defmodule Gutenex.OpenType.Parser do
     """
 
     raw_head = rawTable(ttf, "head", data)
-    <<_major::16, _minor::16, _rev::32, _checksumAdj::32,
-    0x5F, 0x0F, 0x3C, 0xF5, _flags::16, unitsPerEm::16,
-    _created::signed-64, _modified::signed-64,
-    minx::signed-16, miny::signed-16, maxx::signed-16, maxy::signed-16,
-    _macStyle::16, _lowestPPEM::16, _fontDirectionHint::signed-16,
-    _glyphMappingFmt::signed-16, _glyphDataFmt::signed-16>> = raw_head
 
-    bbox = Enum.map([minx, miny, maxx, maxy], fn(x) -> scale(x, unitsPerEm) end)
+    bbox = if raw_head do
+      <<_major::16, _minor::16, _rev::32, _checksumAdj::32,
+      0x5F, 0x0F, 0x3C, 0xF5, _flags::16, unitsPerEm::16,
+      _created::signed-64, _modified::signed-64,
+      minx::signed-16, miny::signed-16, maxx::signed-16, maxy::signed-16,
+      _macStyle::16, _lowestPPEM::16, _fontDirectionHint::signed-16,
+      _glyphMappingFmt::signed-16, _glyphDataFmt::signed-16>> = raw_head
+      [minx, miny, maxx, maxy]
+    else
+      [-100, -100, 100, 100]
+    end
 
     raw_os2 = rawTable(ttf, "OS/2", data)
     measured = if raw_os2 do
@@ -241,9 +249,8 @@ defmodule Gutenex.OpenType.Parser do
       typoAscend::signed-16,typoDescend::signed-16,
       typoLineGap::signed-16, winAscent::16, winDescent::16,
       v0rest::binary>> = raw_os2
-      #IO.puts("OS/2 ver #{os2ver} found")
-      ascent = scale(typoAscend, unitsPerEm)
-      descent = scale(typoDescend, unitsPerEm)
+
+      Logger.debug "OS/2 ver #{os2ver} found"
 
       # os2ver 1 or greater has code page range fields
       v1rest = if os2ver > 0 do
@@ -259,18 +266,18 @@ defmodule Gutenex.OpenType.Parser do
         <<xHeight::signed-16, capHeight::signed-16,
         defaultChar::16, breakChar::16, maxContext::16,
         v2rest::binary>> = v1rest
-        scale(capHeight, unitsPerEm)
+        capHeight
       else
-        scale(0.7 * unitsPerEm, unitsPerEm)
+        0.7 * unitsPerEm
       end
 
       # for osver > 4 also fields:
       # lowerOpticalPointSize::16, upperOpticalPointSize::16
 
-      %{ttf | ascent: ascent, descent: descent, capHeight: capHeight, usWeightClass: usWeightClass, familyClass: familyClass}
+      %{ttf | ascent: typoAscend, descent: typoDescend, capHeight: capHeight, usWeightClass: usWeightClass, familyClass: familyClass}
     else
       Logger.debug "No OS/2 info, synthetic data"
-      %{ttf | ascent: bbox[3], descent: bbox[1], capHeight: bbox[3], usWeightClass: 500}
+      %{ttf | ascent: Enum.at(bbox, 3), descent: Enum.at(bbox, 1), capHeight: Enum.at(bbox, 3), usWeightClass: 500}
     end
 
     # There's no way to get stemV from a TTF file short of analyzing actual outline data
@@ -280,14 +287,6 @@ defmodule Gutenex.OpenType.Parser do
     extractMoreMetrics(%{measured | bbox: bbox, unitsPerEm: unitsPerEm, stemV: stemV}, data)
   end
   defp extractMoreMetrics(ttf, data) do
-    #flags, italic angle, default width
-    raw_post = rawTable(ttf, "post", data)
-    <<_verMajor::16, _verMinor::16,
-    italicMantissa::signed-16, italicFraction::16,
-    _underlinePosition::signed-16, _underlineThickness::signed-16,
-    isFixedPitch::32, _rest::binary>> = raw_post
-    # this is F2DOT14 format defined in OpenType standard
-    italic_angle = italicMantissa + italicFraction / 16384.0
     #TODO: these should be const enum somewhere
     flagFIXED    = 0b0001
     flagSERIF    = 0b0010
@@ -298,14 +297,30 @@ defmodule Gutenex.OpenType.Parser do
     #flagSMALLCAPS = 1 <<< 17
     flagFORCEBOLD = 1 <<< 18
 
-    # if SEMIBOLD or heavier, set forcebold flag
-    forcebold = if ttf.usWeightClass >= 600, do: flagFORCEBOLD, else: 0
+    # defaults in case "post" table is missing
+    itals = 0
+    fixed = 0
+    forcebold = 0
+    #flags, italic angle, default width
+    raw_post = rawTable(ttf, "post", data)
+    if raw_post do
+      <<_verMajor::16, _verMinor::16,
+      italicMantissa::signed-16, italicFraction::16,
+      _underlinePosition::signed-16, _underlineThickness::signed-16,
+      isFixedPitch::32, _rest::binary>> = raw_post
+      # this is F2DOT14 format defined in OpenType standard
+      italic_angle = italicMantissa + italicFraction / 16384.0
 
-    # a non-zero angle sets the italic flag
-    itals = if italic_angle != 0, do: flagITALIC, else: 0
 
-    # mark it fixed pitch if needed
-    fixed = if isFixedPitch > 0, do: flagFIXED, else: 0
+      # if SEMIBOLD or heavier, set forcebold flag
+      forcebold = if ttf.usWeightClass >= 600, do: flagFORCEBOLD, else: 0
+
+      # a non-zero angle sets the italic flag
+      itals = if italic_angle != 0, do: flagITALIC, else: 0
+
+      # mark it fixed pitch if needed
+      fixed = if isFixedPitch > 0, do: flagFIXED, else: 0
+    end
 
     # SERIF and SCRIPT can be derived from sFamilyClass in OS/2 table
     class = ttf.familyClass >>> 8
@@ -315,28 +330,32 @@ defmodule Gutenex.OpenType.Parser do
 
     #hhea
     raw_hhea = rawTable(ttf, "hhea", data)
-    <<_verMajor::16, _verMinor::16,
-    _ascender::signed-16, _descender::signed-16,
-    _linegap::signed-16, _advanceWidthMax::16,
-    _minLeftBearing::signed-16, _minRightBearing::signed-16,
-    _xMaxExtent::signed-16, _caretSlopeRise::16, _caretSlopeRun::16,
-    _caretOffset::signed-16, _reserved::64, _metricDataFormat::signed-16,
-    numMetrics::16>> = raw_hhea
-    #maxp
-    #number of glyphs -- will need to subset if more than 255
-    #hmtx (glyph widths)
-    raw_hmtx = rawTable(ttf, "hmtx", data)
-    range = 1..numMetrics
-    gw = Enum.map(range, fn(x) -> scale(getGlyphWidth(raw_hmtx, x-1), ttf.unitsPerEm) end)
+    if raw_hhea do
+      <<_verMajor::16, _verMinor::16,
+      _ascender::signed-16, _descender::signed-16,
+      _linegap::signed-16, _advanceWidthMax::16,
+      _minLeftBearing::signed-16, _minRightBearing::signed-16,
+      _xMaxExtent::signed-16, _caretSlopeRise::16, _caretSlopeRun::16,
+      _caretOffset::signed-16, _reserved::64, _metricDataFormat::signed-16,
+      numMetrics::16>> = raw_hhea
+      #maxp
+      #number of glyphs -- will need to subset if more than 255
+      #hmtx (glyph widths)
+      raw_hmtx = rawTable(ttf, "hmtx", data)
+      range = 1..numMetrics
+      gw = Enum.map(range, fn(x) -> getGlyphWidth(raw_hmtx, x-1) end)
+      %{ttf | italicAngle: italic_angle, flags: flags, glyphWidths: gw, defaultWidth: Enum.at(gw, 0)}
+    else
+      ttf
+    end
 
-    %{ttf | italicAngle: italic_angle, flags: flags, glyphWidths: gw, defaultWidth: Enum.at(gw, 0)}
   end
   defp getGlyphWidth(hmtx, index) do
     <<width::16>> = binary_part(hmtx, index*4, 2)
     width
   end
-  defp scale(x, unitsPerEm) do
-    x * 1000.0 / unitsPerEm
+  defp scale(x, _unitsPerEm) do
+    x
   end
 
   # mark what portion of the font is embedded
@@ -354,6 +373,7 @@ defmodule Gutenex.OpenType.Parser do
   #cmap header
   def extractCMap(ttf, data) do
     raw_cmap = rawTable(ttf, "cmap", data)
+    if raw_cmap do
     # version, numTables
     <<_version::16, numtables::16, cmaptables::binary>> = raw_cmap
     # read in tableoffsets (plat, enc, offset)
@@ -380,6 +400,9 @@ defmodule Gutenex.OpenType.Parser do
     # reverse the lookup as naive ToUnicode map
     gid2cid = Enum.map(cid2gid, fn ({k, v}) -> {v, k} end) |> Map.new
     %{ttf | :cid2gid => cid2gid, :gid2cid => gid2cid}
+    else
+      ttf
+    end
   end
 
   # read in the platform, encoding, offset triplets
