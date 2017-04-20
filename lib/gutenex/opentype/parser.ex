@@ -215,16 +215,16 @@ defmodule Gutenex.OpenType.Parser do
 
     raw_head = rawTable(ttf, "head", data)
 
-    bbox = if raw_head do
+    {bbox, unitsPerEm} = if raw_head do
       <<_major::16, _minor::16, _rev::32, _checksumAdj::32,
       0x5F, 0x0F, 0x3C, 0xF5, _flags::16, unitsPerEm::16,
       _created::signed-64, _modified::signed-64,
       minx::signed-16, miny::signed-16, maxx::signed-16, maxy::signed-16,
       _macStyle::16, _lowestPPEM::16, _fontDirectionHint::signed-16,
       _glyphMappingFmt::signed-16, _glyphDataFmt::signed-16>> = raw_head
-      [minx, miny, maxx, maxy]
+      {[minx, miny, maxx, maxy], unitsPerEm}
     else
-      [-100, -100, 100, 100]
+      {[-100, -100, 100, 100], 1000}
     end
 
     raw_os2 = rawTable(ttf, "OS/2", data)
@@ -297,13 +297,9 @@ defmodule Gutenex.OpenType.Parser do
     #flagSMALLCAPS = 1 <<< 17
     flagFORCEBOLD = 1 <<< 18
 
-    # defaults in case "post" table is missing
-    itals = 0
-    fixed = 0
-    forcebold = 0
     #flags, italic angle, default width
     raw_post = rawTable(ttf, "post", data)
-    if raw_post do
+    {itals, fixed, forcebold, italic_angle} = if raw_post do
       <<_verMajor::16, _verMinor::16,
       italicMantissa::signed-16, italicFraction::16,
       _underlinePosition::signed-16, _underlineThickness::signed-16,
@@ -320,6 +316,9 @@ defmodule Gutenex.OpenType.Parser do
 
       # mark it fixed pitch if needed
       fixed = if isFixedPitch > 0, do: flagFIXED, else: 0
+      {itals, fixed, forcebold, italic_angle}
+    else
+      {0, 0, 0, 0}
     end
 
     # SERIF and SCRIPT can be derived from sFamilyClass in OS/2 table
@@ -353,9 +352,6 @@ defmodule Gutenex.OpenType.Parser do
   defp getGlyphWidth(hmtx, index) do
     <<width::16>> = binary_part(hmtx, index*4, 2)
     width
-  end
-  defp scale(x, _unitsPerEm) do
-    x
   end
 
   # mark what portion of the font is embedded
@@ -561,12 +557,13 @@ defmodule Gutenex.OpenType.Parser do
     _::binary>> = table
     # 1.2 also has 16-bit offset to MarkGlyphSetsDef
     # 1.3 also has 32-bit offset to ItemVarStore
+    #Logger.debug "GDEF #{versionMaj}.#{versionMin}"
 
     # predefined classes for use with GSUB/GPOS flags
     # 1 = Base, 2 = Ligature, 3 = Mark, 4 = Component
-    glyphClassDef = if glyphClassDef, do: parseGlyphClass(subtable(table, glyphClassDef)), else: nil
+    glyphClassDef = if glyphClassDef > 0, do: parseGlyphClass(subtable(table, glyphClassDef)), else: nil
     # mark attachment class (may be NULL; used with flag in GPOS/GSUB lookups)
-    markAttachClass = if markAttachClass, do: parseGlyphClass(subtable(table, markAttachClass)), else: nil
+    markAttachClass = if markAttachClass > 0, do: parseGlyphClass(subtable(table, markAttachClass)), else: nil
     %{attachments: markAttachClass, classes: glyphClassDef}
   end
   defp parseFeatures(data) do
@@ -610,7 +607,7 @@ defmodule Gutenex.OpenType.Parser do
   end
   defp readLookupIndices(tag, offset, data) do
     lookup_part = subtable(data, offset)
-    <<featureParamsOffset::16, nLookups::16, fx::binary-size(nLookups)-unit(16), _::binary>> = lookup_part
+    <<_featureParamsOffset::16, nLookups::16, fx::binary-size(nLookups)-unit(16), _::binary>> = lookup_part
     #if featureParamsOffset != 0 do
       #  Logger.debug "Feature #{tag} has feature params"
       #end

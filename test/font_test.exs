@@ -4,19 +4,6 @@ defmodule GutenexFontTest do
   alias Gutenex.PDF.OpenTypeFont
   alias Gutenex.OpenType.Layout
 
-  # generate a HarfBuzz-style string
-  # this allows us to re-use HarfBuzz shaping tests
-  def harfbuzz(glyphs, pos) do
-    Enum.zip(glyphs, pos)
-    |> Enum.map_join("|", fn {g, {_, xoff, yoff, xadv, _}} ->
-      if xoff != 0 or yoff != 0 do
-        "#{g}@#{xoff},#{yoff}+#{xadv}"
-      else
-        "#{g}+#{xadv}"
-      end
-    end)
-  end
-
   test "parse Truetype font metrics" do
     ttf = TrueType.new
           |> TrueType.parse("./test/support/fonts/NotoSansCJKjp-Bold.otf")
@@ -78,9 +65,9 @@ defmodule GutenexFontTest do
     xpos = pos |> Enum.map(fn {_,x,_,_,_} -> x end)
     xadv = pos |> Enum.map(fn {_,_,_,x,_} -> x end)
     # mark has an xOffset
-    assert xpos == [0, 0, 636.82421875, 0]
+    assert xpos == [0, 0, 942, 0]
     # mark has zero width
-    assert xadv == [632.8125, 305.17578125, 0, 632.8125]
+    assert xadv == [1296, 625, 0, 1296]
   end
 
   test "Exercise GSUB 2 - one-to-many substitution" do
@@ -126,25 +113,8 @@ defmodule GutenexFontTest do
     s = Layout.detect_script("\u062D\u062D\u062D\u062D\u062D\u062D\u0628")
     assert s == "arab"
 
-    {glyphs, pos} = TrueType.layout_text(ttf, "\u062D\u062D\u062D\u062D\u062D\u062D\u0628")
-    hb = harfbuzz(glyphs, pos)
-    assert hb == ""
-    assert glyphs ==  [18, 460, 881, 717, 227]
-  end
-
-  test "cursive tests" do
-    borrow_harfbuzz_test("./test/support/fonts/sha1sum/c4e48b0886ef460f532fb49f00047ec92c432ec0.ttf",
-                         "\u0643\u0645\u0645\u062B\u0644",
-                         "8+738|5@441,1197+0|6@0,432+405|9@0,477+452|9@0,977+452|10@20,1577+207")
-  end
-  def borrow_harfbuzz_test(font, text, expected) do
-    ttf = TrueType.new
-          |> TrueType.parse(font)
-    s = Layout.detect_script(text)
-    assert s == "arab"
-    {glyphs, pos} = TrueType.layout_text(ttf, text)
-    hb = harfbuzz(glyphs, pos)
-    assert hb == expected
+    {glyphs, _pos} = TrueType.layout_text(ttf, "\u062D\u062D\u062D\u062D\u062D\u062D\u0628")
+    assert glyphs ==  [230, 591, 591, 591, 591, 591, 18, 523]
   end
 
   # turn OpenType features on and off in an integration test
