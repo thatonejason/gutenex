@@ -6,6 +6,7 @@ defmodule Gutenex.OpenType.Positioning do
   # add two positions together, treat nils as zeroed structure
   # category std_width, kern, pos can be used to optimize PDF output
   defp addPos(p, nil), do: p
+  defp addPos(nil, {a,b,c,d}), do: {:pos, a, b, c, d}
   defp addPos(p, {0,0,0,0}), do: p
   defp addPos({:std_width, a,b,c,d}, {0,0,g,0}), do: {:kern, a, b, c+g, d}
   defp addPos({:std_width, a,b,c,d}, {e,f,g,h}), do: {:pos, a+e, b+f, c+g, d+h}
@@ -19,24 +20,24 @@ defmodule Gutenex.OpenType.Positioning do
   # ==============================================
 
   # type 9 - when 32-bit offsets are used for subtables
-  def applyLookupGPOS({9, flag, offsets, table}, gdef, lookups, isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({9, flag, offsets, table, mfs}, gdef, lookups, isRTL, {glyphs, pos, c, m}) do
     subtables = offsets
             |> Enum.map(fn x ->
             <<1::16, actual_type::16, off::32>> = binary_part(table, x, 8)
             {actual_type, Parser.subtable(table, x + off)}
               end)
     #for each subtable
-    Enum.reduce(subtables, {glyphs, pos, c, m}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, tbl}, gdef, lookups, isRTL, input) end)
+    Enum.reduce(subtables, {glyphs, pos, c, m}, fn ({type, tbl}, input) -> applyLookupGPOS({type, flag, tbl, mfs}, gdef, lookups, isRTL, input) end)
   end
 
   # all other types
-  def applyLookupGPOS({type, flag, offsets, table}, gdef, lookups, isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({type, flag, offsets, table, mfs}, gdef, lookups, isRTL, {glyphs, pos, c, m}) do
     #for each subtable
-    Enum.reduce(offsets, {glyphs, pos, c, m}, fn (offset, input) -> applyLookupGPOS({type, flag, Parser.subtable(table, offset)}, gdef, lookups, isRTL, input) end)
+    Enum.reduce(offsets, {glyphs, pos, c, m}, fn (offset, input) -> applyLookupGPOS({type, flag, Parser.subtable(table, offset), mfs}, gdef, lookups, isRTL, input) end)
   end
 
   #type 1 - single positioning
-  def applyLookupGPOS({1, _flag, table}, _gdef, _lookups, _isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({1, _flag, table, _mfs}, _gdef, _lookups, _isRTL, {glyphs, pos, c, m}) do
     <<fmt::16, covOff::16, valueFormat::16, rest::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, covOff))
     valSize = Parser.valueRecordSize(valueFormat)
@@ -62,7 +63,7 @@ defmodule Gutenex.OpenType.Positioning do
   end
 
   # type 2 - pair positioning (ie, kerning)
-  def applyLookupGPOS({2, _flag, table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({2, _flag, table, _mfs}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     <<fmt::16, covOff::16, record1::16, record2::16, rest::binary>> = table
     kerning = case fmt do
       1 ->
@@ -112,7 +113,7 @@ defmodule Gutenex.OpenType.Positioning do
   end
 
   # type 3 - cursive positioning
-  def applyLookupGPOS({3, flag, table}, gdef, _lookups, isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({3, flag, table, mfs}, gdef, _lookups, isRTL, {glyphs, pos, c, m}) do
     <<_fmt::16, coverageOff::16, nAnchorPairs::16, nrecs::binary-size(nAnchorPairs)-unit(32), _::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, coverageOff))
     records = for << <<entryAnchor::16, exitAnchor::16>> <- nrecs >>, do: {entryAnchor, exitAnchor}
@@ -124,7 +125,7 @@ defmodule Gutenex.OpenType.Positioning do
                   end)
 
     # align entry/exit points
-    {p, d} = applyCursive(coverage, anchorPairs, flag, gdef, isRTL, glyphs, pos, [], [])
+    {p, d} = applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, glyphs, pos, [], [])
     #Logger.debug "CURSIVE #{inspect glyphs} #{inspect d}"
     cdeltas = c
           |> Enum.with_index
@@ -133,7 +134,7 @@ defmodule Gutenex.OpenType.Positioning do
   end
 
   # type 4 - mark-to-base positioning
-  def applyLookupGPOS({4, flag, table}, gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({4, flag, table, mfs}, gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
     
@@ -163,7 +164,7 @@ defmodule Gutenex.OpenType.Positioning do
     adjusted = applyMarkToBase(markCoverage, baseCoverage, 
                                baseArray, markArray, 
                                # skip flags and GDEF info
-                               flag, gdef, 
+                               flag, mfs, gdef, 
                                #prev and next details
                                [hd(glyphs)], tl(glyphs), pos, [nil])
 
@@ -173,23 +174,23 @@ defmodule Gutenex.OpenType.Positioning do
   end
 
   # type 5 - mark to ligature positioning
-  def applyLookupGPOS({5, _flag, table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({5, _flag, table, _mfs}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     # same as format 4, except "base" is a ligature with (possibly) multiple anchors
-    <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
-    markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
+    <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, _nClasses::16, 
+    markArrayOffset::16, _baseArrayOffset::16, _::binary>> = table
 
-    markCoverage = Parser.parseCoverage(Parser.subtable(table, markCoverageOff))
-    baseCoverage = Parser.parseCoverage(Parser.subtable(table, baseCoverageOff))
+    _markCoverage = Parser.parseCoverage(Parser.subtable(table, markCoverageOff))
+    _baseCoverage = Parser.parseCoverage(Parser.subtable(table, baseCoverageOff))
 
     markArrayTbl = Parser.subtable(table, markArrayOffset)
-    markArray = Parser.parseMarkArray(markArrayTbl)
+    _markArray = Parser.parseMarkArray(markArrayTbl)
 
     Logger.debug "GPOS 5 - mark to ligature"
     {glyphs, pos, c, m}
   end
 
   # type 6 - mark to mark positioning
-  def applyLookupGPOS({6, flag, table}, gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({6, flag, table, mfs}, gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     # same as format 4, except "base" is another mark
     <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
     markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
@@ -214,18 +215,18 @@ defmodule Gutenex.OpenType.Positioning do
     markArrayTbl = Parser.subtable(table, markArrayOffset)
     markArray = Parser.parseMarkArray(markArrayTbl)
 
-    adjusted = applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, flag, gdef, [hd(glyphs)], tl(glyphs), pos, [nil])
+    adjusted = applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, flag, mfs, gdef, [hd(glyphs)], tl(glyphs), pos, [nil])
     #Logger.debug "MKMK #{inspect glyphs} #{inspect adjusted}"
     positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
     {glyphs, positioning, c, m}
   end
 
   # type 7 - contextual positioning
-  def applyLookupGPOS({7, _flag, table}, gdef, lookups, _isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({7, _flag, table, _mfs}, gdef, lookups, _isRTL, {glyphs, pos, c, m}) do
     <<format::16, details::binary>> = table
     pos = case format do
       1 ->
-        Logger.debug "GSUB 7.1 - contextual positioning"
+        Logger.debug "GPOS 7.1 - contextual positioning"
         pos
       2 ->
         <<covOff::16, 
@@ -249,31 +250,63 @@ defmodule Gutenex.OpenType.Positioning do
         _positioning = applyContextPos2(coverage, rulesets, classes, gdef, lookups, glyphs, pos, [])
         pos
       3 ->
-        Logger.debug "GSUB 7.3 - contextual positioning"
+        Logger.debug "GPOS 7.3 - contextual positioning"
         pos
       _ ->
-        Logger.debug "GSUB 7 - contextual positioning format #{format}"
+        Logger.debug "GPOS 7 - contextual positioning format #{format}"
         pos
     end
     {glyphs, pos, c, m}
   end
 
   # type 8 - chained contextual positioning
-  def applyLookupGPOS({8, _flag, _table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
-    Logger.debug "GPOS 8 - chained context"
+  def applyLookupGPOS({8, flag, table, mfs}, gdef, lookups, _isRTL, {glyphs, pos, c, m}) do
+    <<format::16, details::binary>> = table
+    pos = case format do
+      1 ->
+        Logger.debug "GPOS 8.1 - chained contextual positioning"
+        pos
+      2 ->
+        Logger.debug "GPOS 8.2 - chained contextual positioning"
+        pos
+      3 ->
+        <<backtrackCount::16, backoff::binary-size(backtrackCount)-unit(16),
+          inputCount::16, inputOff::binary-size(inputCount)-unit(16),
+          lookaheadCount::16, lookaheadOff::binary-size(lookaheadCount)-unit(16),
+          substCount::16, substRecs::binary-size(substCount)-unit(32),
+          _::binary>> = details
+        
+        # parse the coverage tables and positioning records  
+        backOffsets = for << <<x::16>> <- backoff >>, do: x
+        btCoverage = Enum.map(backOffsets, fn covOff -> Parser.parseCoverage(Parser.subtable(table, covOff)) end)
+        inputOffsets = for << <<x::16>> <- inputOff >>, do: x
+        coverage = Enum.map(inputOffsets, fn covOff -> Parser.parseCoverage(Parser.subtable(table, covOff)) end)
+        lookaheadOffsets = for << <<x::16>> <- lookaheadOff >>, do: x
+        laCoverage = Enum.map(lookaheadOffsets, fn covOff -> Parser.parseCoverage(Parser.subtable(table, covOff)) end)
+
+        # index x at which to apply lookup y
+        posRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
+
+        g = filter_glyphs(glyphs, flag, gdef, mfs) |> Enum.to_list
+        #positioning = List.duplicate(nil, length(pos))
+        applyChainingContextPos3(btCoverage, coverage, laCoverage, posRecords, gdef, lookups, g, pos, [])
+      _ ->
+        Logger.debug "GPOS 8 - chained contextual positioning format #{format}"
+        pos
+    end
     {glyphs, pos, c, m}
   end
 
   #unhandled type; log and leave input untouched
-  def applyLookupGPOS({type, _flag, _table}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
+  def applyLookupGPOS({type, _flag, _table, _mfs}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     Logger.debug "Unknown GPOS lookup type #{type}"
     {glyphs, pos, c, m}
   end
 
-  defp applyMarkToBase(_markCoverage, _baseCoverage, _baseArray, _markArray, _lookupFlag, _gdef, _prev, [], _, output), do: Enum.reverse(output)
-  defp applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, gdef, prev, [g | glyphs], [prev_pos | pos], output) do
+  defp applyMarkToBase(_markCoverage, _baseCoverage, _baseArray, _markArray, _lookupFlag, _mfs, _gdef, _prev, [], _, output), do: Enum.reverse(output)
+  defp applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, prev, [g | glyphs], [prev_pos | pos], output) do
     # should we skip this glyph?
-    skipMark = should_skip_glyph(g, lookupFlag, gdef)
+    skipMark = should_skip_glyph(g, lookupFlag, gdef, mfs)
 
     # TODO: this code assumes prev is a base
     markloc = findCoverageIndex(markCoverage, g)
@@ -296,7 +329,7 @@ defmodule Gutenex.OpenType.Positioning do
     else
       nil
     end
-    applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, gdef, [g | prev], glyphs, pos, [mark_offset | output])
+    applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, [g | prev], glyphs, pos, [mark_offset | output])
   end
 
   defp applyKerning2(_classDef1, _clasDef2, _pairSets, [], output), do: output
@@ -345,21 +378,22 @@ defmodule Gutenex.OpenType.Positioning do
     applyKerning(coverage, pairSets, glyphs, output)
   end
 
-  defp applyCursive(_coverage, _anchorPairs, _flag, _gdef, _isRTL,  [], [], output, deltas), do: {Enum.reverse(output), Enum.reverse(deltas)}
-  defp applyCursive(_coverage, _anchorPairs, _flag, _gdef, _isRTL,  [_], [p], output, deltas), do: {Enum.reverse([p | output]), Enum.reverse([0 | deltas])}
-  defp applyCursive(coverage, anchorPairs, flag, gdef, isRTL, [g, g2 | glyphs], [p, p2 | pos], output, deltas) do
+  defp applyCursive(_coverage, _anchorPairs, _flag, _mfs, _gdef, _isRTL,  [], [], output, deltas), do: {Enum.reverse(output), Enum.reverse(deltas)}
+  defp applyCursive(_coverage, _anchorPairs, _flag, _mfs, _gdef, _isRTL,  [_], [p], output, deltas), do: {Enum.reverse([p | output]), Enum.reverse([0 | deltas])}
+  defp applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, [g, g2 | glyphs], [p, p2 | pos], output, deltas) do
     # decompose the flag
     <<_attachmentType::8, _::3, _useMark::1, _ignoreMark::1, _ignoreLig::1, _ignoreBase::1, rtl::1>> = <<flag::16>>
 
-    skipCur = should_skip_glyph(g, flag, gdef)
+    skipCur = should_skip_glyph(g, flag, gdef, mfs)
 
+    #TODO: clean up this mess of compiler warnings
     skipped = []
     pskipped = []
-    skipNext = should_skip_glyph(g2, flag, gdef)
+    skipNext = should_skip_glyph(g2, flag, gdef, mfs)
     if skipNext do
       gtemp = [g2 | glyphs]
       ptemp = [p2 | pos]
-      skipped = gtemp |> Enum.take_while(fn x -> should_skip_glyph(x, flag, gdef) end)
+      skipped = gtemp |> Enum.take_while(fn x -> should_skip_glyph(x, flag, gdef, mfs) end)
       numSkipped = length(skipped)
       if numSkipped < length(gtemp) do 
         pskipped = ptemp |> Enum.take(numSkipped)
@@ -407,15 +441,17 @@ defmodule Gutenex.OpenType.Positioning do
     else
       [p, p2, 0]
     end
-    # TODO: yOffset needs to be culmulative for connected glyphs!
-    # hmm... could be multiple passes (assume one for now?)
-    applyCursive(coverage, anchorPairs, flag, gdef, isRTL, skipped ++ [g2 | glyphs], pskipped ++ [next | pos], [cur | output], [gdelta | deltas])
+    applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, skipped ++ [g2 | glyphs], pskipped ++ [next | pos], [cur | output], [gdelta | deltas])
   end
 
+  # adjust the y-offsets of connected glyphs
   def adjustCursiveOffset(positions, deltas) do
     0..length(deltas)-1
     |> Enum.reduce({positions, deltas}, fn (x, {p, d}) -> adjustCursiveOffsets(x, p, d) end)
   end
+
+  # this is recursive since offset accumulates over a run of connected glyphs
+  # Urdu in particular shows this in action
   def adjustCursiveOffsets(index, positions, deltas) do
     d = Enum.at(deltas, index)
     if d == 0 do
@@ -477,6 +513,63 @@ defmodule Gutenex.OpenType.Positioning do
     applyContextPos2(coverage, rulesets, classes, gdef, lookups, glyphs, pos, output)
   end
 
+  # handle coverage-based format for context chaining
+  defp applyChainingContextPos3(_btCoverage, _coverage, _laCoverage, _subst, _gdef, _lookups, [], pos, _), do: pos
+  defp applyChainingContextPos3(btCoverage, coverage, laCoverage, posRecords, gdef, lookups, [{g, index} | glyphs], pos, output) do
+    backtrack = length(btCoverage)
+    inputExtra = length(coverage) - 1
+    lookahead = length(laCoverage)
+    #not enough backtracking or lookahead to even attempt match
+    oo = if length(output) < backtrack or length(glyphs) < lookahead + inputExtra do
+      # positioning unchanged
+      pos
+    else
+
+      #do we match the input
+      input = [{g, index} | Enum.take(glyphs, inputExtra)]
+      inputMatches = input
+                     |> Enum.zip(coverage)
+                     |> Enum.all?(fn {{g, _index}, cov} -> findCoverageIndex(cov, g) != nil end)
+
+      #do we match backtracking?
+      backMatches = if backtrack > 0 do
+        output
+        |> Enum.take(backtrack)
+        |> Enum.zip(btCoverage)
+        |> Enum.all?(fn {{g, _index}, cov} -> findCoverageIndex(cov, g) != nil end)
+      else
+        true
+      end
+
+      #do we match lookahead
+      laMatches = if lookahead > 0 do
+        glyphs
+        |> Enum.drop(inputExtra)
+        |> Enum.take(lookahead)
+        |> Enum.zip(laCoverage)
+        |> Enum.all?(fn {{g, _index}, cov} -> findCoverageIndex(cov, g) != nil end)
+      else
+        true
+      end
+
+      if inputMatches and backMatches and laMatches do
+        posRecords
+        |> Enum.reduce(pos, fn ({inputIndex, lookupIndex}, accPos) ->
+          lookup = Enum.at(lookups, lookupIndex)
+          {g, index} = Enum.at(input, inputIndex)
+          candidate_position = Enum.at(accPos, index)
+          # we only care about the new pos
+          {_, [adjusted_pos | _], _, _} = applyLookupGPOS(lookup, gdef, lookups, nil, {[g], [candidate_position], [], []})
+          List.replace_at(accPos, index, adjusted_pos)
+        end)
+      else
+        pos
+      end
+    end
+    # oo is the possibly updated positioning
+    # output will be used for backtracking
+    applyChainingContextPos3(btCoverage, coverage, laCoverage, posRecords, gdef, lookups, glyphs, oo, [{g, index} | output])
+  end
 
 
   # given a glyph, find out the coverage index (can be nil)
@@ -512,23 +605,44 @@ defmodule Gutenex.OpenType.Positioning do
     end
   end
 
-  # returns true when the lookup flag is set to a value
-  def should_skip_glyph(g, flag, gdef) do
+  # uses the lookup flag to determine which glyphs are ignored
+  def should_skip_glyph(g, flag, gdef, mfs) do
     # decompose the flag
-    <<attachmentType::8, _::3, _useMark::1, ignoreMark::1, ignoreLig::1, ignoreBase::1, _rtl::1>> = <<flag::16>>
+    <<attachmentType::8, _::3, useMarkFilteringSet::1, ignoreMark::1, ignoreLig::1, ignoreBase::1, _rtl::1>> = <<flag::16>>
+
+    # only care about classification if flag set
+    glyphClass = if flag > 1 do
+      classifyGlyph(g, gdef.classes)
+    else
+      0
+    end
 
     cond do
       # short circuit - if no flags, we aren't skipping anything
       flag == 0 -> false
+      # if only RTL flag not skipping anything
+      flag == 1 -> false
       # skip if ignore is set and we match the corresponding GDEF class
-      ignoreBase == 1 and classifyGlyph(g, gdef.classes) == 1 -> true
-      ignoreLig  == 1 and classifyGlyph(g, gdef.classes) == 2 -> true
-      ignoreMark == 1 and classifyGlyph(g, gdef.classes) == 3 -> true
+      ignoreBase == 1 and glyphClass == 1 -> true
+      ignoreLig  == 1 and glyphClass == 2 -> true
+      ignoreMark == 1 and glyphClass == 3 -> true
+      # DO NOT SKIP if specified mark glyph set but not a mark
+      useMarkFilteringSet == 1 and glyphClass != 3  -> false
+      # skip if we have a mark that isn't in specified mark glyph set
+      useMarkFilteringSet == 1 and classifyGlyph(g, gdef.classes) == 3 and findCoverageIndex(Enum.at(gdef.mark_sets, mfs), g) == nil -> true
       # skip if we don't match a non-zero attachment type
       attachmentType != 0 and classifyGlyph(g, gdef.attachments) != attachmentType -> true
       # default is DO NOT SKIP
       true -> false
     end
+  end
+
+  # then we use / save {pos, index}
+  # returns array of {glyph, index} of glyphs that are not ignored (according to lookup flag)
+  def filter_glyphs(glyphs, flag, gdef, mfs) do
+    glyphs
+    |> Stream.with_index
+    |> Stream.reject(fn {g, _} -> should_skip_glyph(g, flag, gdef, mfs) end)
   end
 
 end

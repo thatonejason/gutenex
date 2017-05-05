@@ -95,7 +95,7 @@ defmodule GutenexFontTest do
     # standard shaping
     # init, media, fina, isol
     {glyphs, _} = TrueType.layout_text(ttf, "\u0642\u0644\u0627\u06A9")
-    assert glyphs == [901, 227, 249, 16, 304]
+    assert glyphs == [247, 279, 268, 16, 304]
 
     {glyphs, _} = TrueType.layout_text(ttf, "\u0644\u0627\u06A9\u0642")
     # init, fina, init, fina
@@ -103,7 +103,7 @@ defmodule GutenexFontTest do
 
     {glyphs, _} = TrueType.layout_text(ttf, "\u0627\u06A9\u0642\u0644")
     # isol, init, medi, fina
-    assert glyphs ==  [16, 460, 881, 717, 227]
+    assert glyphs ==  [16, 460, 249, 717, 227]
   end
 
   test "Urdu cursive" do

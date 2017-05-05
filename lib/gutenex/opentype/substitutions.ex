@@ -9,7 +9,7 @@ defmodule Gutenex.OpenType.Substitutions do
     # simply passes through the input
   # ==============================================
   # GSUB 1 -- single substitution (one-for-one)
-  def applyLookupGSUB({1, _flag, table}, _gdef, _lookups, tag, pga, glyphs) do
+  def applyLookupGSUB({1, _flag, table, _mfs}, _gdef, _lookups, tag, {glyphs, pga}) do
     <<format::16, covOff::16, rest::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, covOff))
     replace = case format do
@@ -24,7 +24,7 @@ defmodule Gutenex.OpenType.Substitutions do
         Logger.debug "Unknown GSUB 1 subtable format #{format}"
         fn g -> g end
     end
-    if tag != nil do
+    output = if tag != nil do
       IO.puts "GSUB 1 per-glyph #{tag} lookup"
       glyphs
       |> Enum.with_index
@@ -33,10 +33,11 @@ defmodule Gutenex.OpenType.Substitutions do
     else
       Enum.map(glyphs, replace)
     end
+    {output, pga}
   end
 
   #GSUB 2 - multiple substitution (expand one glyph into several)
-  def applyLookupGSUB({2, _flag, table}, _gdef, _, tag, pga, glyphs) do
+  def applyLookupGSUB({2, _flag, table, _mfs}, _gdef, _, tag, {glyphs, pga}) do
     <<_format::16, covOff::16, nSeq::16, subOff::binary-size(nSeq)-unit(16), _::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, covOff))
     # sequence tables
@@ -44,21 +45,32 @@ defmodule Gutenex.OpenType.Substitutions do
 
     # sequence table structure identical to alt table
     sequences = Enum.map(seqOffsets, fn seqOffset -> Parser.parseAlts(table, seqOffset) end)
-    if tag != nil do
+    output = if tag != nil do
       glyphs
       |> Enum.with_index
       |> Enum.map(fn {x, i} -> {x, Enum.at(pga, i)} end)
       |> Enum.map(fn {g, assignment} -> if assignment == tag, do: applyMultiSub(g, coverage, sequences), else: g end)
-      |> List.flatten
     else
       glyphs
       |> Enum.map(fn g -> applyMultiSub(g, coverage, sequences) end)
-      |> List.flatten
     end
+
+    #ensure we preserve the per-glyph tags during expansion
+    pga_out = if pga do
+      output
+         |> Enum.with_index
+         |> Enum.map(fn {x, i} -> {x, Enum.at(pga, i)} end)
+         |> Enum.map(fn {g, assignment} -> if is_list(g), do: List.duplicate(assignment, length(g)), else: assignment  end)
+         |> List.flatten
+    else
+      pga
+    end
+
+    {List.flatten(output), pga_out}
   end
 
   # GSUB type 3 -- alternate substitution (one-for-one)
-  def applyLookupGSUB({3, _flag, _offsets, table}, _gdef, _, tag, pga, glyphs) do
+  def applyLookupGSUB({3, _flag, _offsets, table, _mfs}, _gdef, _, tag, pga, glyphs) do
     <<1::16, covOff::16, nAltSets::16, aoff::binary-size(nAltSets)-unit(16), _::binary>> = table
     coverage = Parser.parseCoverage(Parser.subtable(table, covOff))
     # alternate set tables
@@ -77,7 +89,7 @@ defmodule Gutenex.OpenType.Substitutions do
   end
 
   # GSUB type 4 -- ligature substition (single glyph replaces multiple glyphs)
-  def applyLookupGSUB({4, _flag, table}, _gdef, _, tag, _pga, input) do
+  def applyLookupGSUB({4, _flag, table, _mfs}, _gdef, _, tag, _pga, input) do
     #parse ligature table
     <<1::16, covOff::16, nLigSets::16, lsl::binary-size(nLigSets)-unit(16), _::binary>> = table
     # ligature set tables
@@ -93,7 +105,7 @@ defmodule Gutenex.OpenType.Substitutions do
   end
 
   #GSUB type 5 -- contextual substitution
-  def applyLookupGSUB({5, _flag, table}, _gdef, lookups, tag, _pga, glyphs) do
+  def applyLookupGSUB({5, _flag, table, _mfs}, _gdef, lookups, tag, _pga, glyphs) do
     <<format::16, details::binary>> = table
     if tag != nil do
       IO.puts "GSUB 5 per-glyph #{tag} lookup"
@@ -144,7 +156,7 @@ defmodule Gutenex.OpenType.Substitutions do
   end
 
   #GSUB type 6 -- chained contextual substitution
-  def applyLookupGSUB({6, _flag, table}, _gdef, lookups, tag, _pga, glyphs) do
+  def applyLookupGSUB({6, flag, table, mfs}, gdef, lookups, tag, _pga, glyphs) do
     if tag != nil do
       IO.puts "GSUB 6 per-glyph #{tag} lookup"
     end
@@ -186,8 +198,10 @@ defmodule Gutenex.OpenType.Substitutions do
         lookaheadOffsets = for << <<x::16>> <- lookaheadOff >>, do: x
         laCoverage = Enum.map(lookaheadOffsets, fn covOff -> Parser.parseCoverage(Parser.subtable(table, covOff)) end)
         substRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
-        context = {btCoverage, coverage, laCoverage, substRecords}
-        applyChainingContextSub3(btCoverage, coverage, laCoverage, substRecords, lookups, glyphs, [])
+        # context = {btCoverage, coverage, laCoverage, substRecords}
+        {f, skipped} = filter_glyphs(glyphs, flag, gdef, mfs)
+        replaced = applyChainingContextSub3(btCoverage, coverage, laCoverage, substRecords, lookups, f, [])
+        unfilter_glyphs(replaced, skipped)
       _ ->
         Logger.debug "GSUB 6 - chaining substitution format #{format}"
         glyphs
@@ -198,30 +212,37 @@ defmodule Gutenex.OpenType.Substitutions do
   #GSUB type 7 -- extended table (handled below as it contains offset argument)
 
   #GSUB type 8 -- reverse chained contextual substitution
-  def applyLookupGSUB({8, _flag, _table}, _gdef, _, _tag, _pga, glyphs) do
+  def applyLookupGSUB({8, _flag, _table, _mfs}, _gdef, _, _tag, _pga, glyphs) do
     Logger.debug "GSUB 8 - reverse chaining substitution"
     glyphs
   end
 
   #unhandled type; log and leave input untouched
-  def applyLookupGSUB({type, _flag, _table}, _gdef, _, _tag, _pga, glyphs) do
+  def applyLookupGSUB({type, _flag, _table, _mfs}, _gdef, _, _tag, _pga, glyphs) do
     Logger.debug "Unknown GSUB lookup type #{type}"
     glyphs
   end
 
+  #overload
+  def applyLookupGSUB({type, flag, table, mfs}, gdef, lookups, tag, {glyphs, pga}) do
+    out = applyLookupGSUB({type, flag, table, mfs}, gdef, lookups, tag, pga, glyphs)
+    {out, pga}
+  end
+
+
   # GSUB type 7 -- extended table
-  def applyLookupGSUB({7, flag, offsets, table}, gdef, lookups, tag, pga, glyphs) do
+  def applyLookupGSUB({7, flag, offsets, table, mfs}, gdef, lookups, tag, {glyphs, pga}) do
     subtables = offsets
             |> Enum.map(fn x ->
             <<1::16, lt::16, off::32>> = binary_part(table, x, 8)
             {lt, Parser.subtable(table, x + off)}
               end)
     #for each subtable
-    Enum.reduce(subtables, glyphs, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl}, gdef, lookups, tag, pga, input) end)
+    Enum.reduce(subtables, {glyphs, pga}, fn ({type, tbl}, input) -> applyLookupGSUB({type, flag, tbl, mfs}, gdef, lookups, tag, input) end)
   end
-  def applyLookupGSUB({type, flag, offsets, table}, gdef, lookups, tag, pga, glyphs) do
+  def applyLookupGSUB({type, flag, offsets, table, mfs}, gdef, lookups, tag, {glyphs, pga}) do
     #for each subtable
-    Enum.reduce(offsets, glyphs, fn (offset, input) -> applyLookupGSUB({type, flag, Parser.subtable(table, offset)}, gdef, lookups, tag, pga, input) end)
+    Enum.reduce(offsets, {glyphs, pga}, fn (offset, input) -> applyLookupGSUB({type, flag, Parser.subtable(table, offset), mfs}, gdef, lookups, tag, input) end)
   end
 
   defp applySingleSub(g, coverage, delta) when is_integer(delta) do
@@ -301,7 +322,7 @@ defmodule Gutenex.OpenType.Substitutions do
         |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
           candidate = Enum.at(acc, inputLoc)
           lookup = Enum.at(lookups, lookupIndex)
-          [replacement | _] = applyLookupGSUB(lookup, nil, lookups, nil, nil, [candidate])
+          {[replacement | _], _} = applyLookupGSUB(lookup, nil, lookups, nil, {[candidate], nil})
           List.replace_at(acc, inputLoc, replacement)
         end)
         # skip over any matched glyphs
@@ -342,7 +363,7 @@ defmodule Gutenex.OpenType.Substitutions do
         |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
           candidate = Enum.at(acc, inputLoc)
           lookup = Enum.at(lookups, lookupIndex)
-          [replacement | _] = applyLookupGSUB(lookup, nil, lookups, nil, nil, [candidate])
+          {[replacement | _], _} = applyLookupGSUB(lookup, nil, lookups, nil, {[candidate], nil})
           List.replace_at(acc, inputLoc, replacement)
         end)
         # skip over any matched glyphs
@@ -377,7 +398,7 @@ defmodule Gutenex.OpenType.Substitutions do
         |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
           candidate = Enum.at(acc, inputLoc)
           lookup = Enum.at(lookups, lookupIndex)
-          [replacement | _] = applyLookupGSUB(lookup, nil, lookups, nil, nil, [candidate])
+          {[replacement | _], _} = applyLookupGSUB(lookup, nil, lookups, nil, {[candidate], nil})
           List.replace_at(acc, inputLoc, replacement)
         end)
         # Logger.debug "GSUB6.2 rule = #{inspect input} =>  #{inspect replaced}"
@@ -437,6 +458,9 @@ defmodule Gutenex.OpenType.Substitutions do
   # handle coverage-based format for context chaining
   defp applyChainingContextSub3(_btCoverage, _coverage, _laCoverage, _subst, _, [], output), do: output
   defp applyChainingContextSub3(btCoverage, coverage, laCoverage, substRecords, lookups, [g | glyphs], output) do
+    #TODO: Need to handle skipped glyphs
+
+
     backtrack = length(btCoverage)
     inputExtra = length(coverage) - 1
     lookahead = length(laCoverage)
@@ -478,7 +502,7 @@ defmodule Gutenex.OpenType.Substitutions do
         |> Enum.reduce(input, fn {inputLoc, lookupIndex}, acc ->
           candidate = Enum.at(acc, inputLoc)
           lookup = Enum.at(lookups, lookupIndex)
-          [replacement | _] = applyLookupGSUB(lookup, nil, lookups, nil, nil, [candidate])
+          {[replacement | _], _} = applyLookupGSUB(lookup, nil, lookups, nil, {[candidate], nil})
           List.replace_at(acc, inputLoc, replacement)
         end)
         replaced
@@ -527,4 +551,46 @@ defmodule Gutenex.OpenType.Substitutions do
     end
   end
 
+  #TODO: does this make sense in regard to GSUB? indices might not be sufficient if not one-to-one SUB! 
+  def filter_glyphs(glyphs, flag, gdef, mfs) do
+    skipped = glyphs
+              |> Enum.with_index
+              |> Enum.filter(fn {g, _} -> should_skip_glyph(g, flag, gdef, mfs) end)
+
+    filtered = glyphs
+              |> Enum.filter(fn g -> !should_skip_glyph(g, flag, gdef, mfs) end)
+    {filtered, skipped}
+  end
+
+  def unfilter_glyphs(glyphs, skipped) do
+    #Logger.debug("unfilter #{inspect glyphs}, #{inspect skipped}")
+    skipped
+    |> Enum.reduce(glyphs, fn {g, i}, acc -> List.insert_at(acc, i, g) end)
+  end
+
+
+  # returns true when the lookup flag is set to a value
+  def should_skip_glyph(g, flag, gdef, mfs) do
+    # decompose the flag
+    <<attachmentType::8, _::3, useMarkFilteringSet::1, ignoreMark::1, ignoreLig::1, ignoreBase::1, _rtl::1>> = <<flag::16>>
+
+    if useMarkFilteringSet != 0 do
+      Logger.debug "MFS #{mfs}"
+    end
+
+    cond do
+      # short circuit - if no flags, we aren't skipping anything
+      flag == 0 -> false
+      # skip if ignore is set and we match the corresponding GDEF class
+      ignoreBase == 1 and classifyGlyph(g, gdef.classes) == 1 -> true
+      ignoreLig  == 1 and classifyGlyph(g, gdef.classes) == 2 -> true
+      ignoreMark == 1 and classifyGlyph(g, gdef.classes) == 3 -> true
+      # skip if mark not in mark glyph set
+      useMarkFilteringSet == 1 and classifyGlyph(g, gdef.classes) == 3 and findCoverageIndex(g, Enum.at(gdef.mark_sets, mfs)) == nil -> true
+      # skip if mark doesn't match a non-zero attachment type
+      attachmentType != 0  and classifyGlyph(g, gdef.classes) == 3 and classifyGlyph(g, gdef.attachments) != attachmentType -> true
+      # default is DO NOT SKIP
+      true -> false
+    end
+  end
 end

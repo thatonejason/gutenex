@@ -551,11 +551,17 @@ defmodule Gutenex.OpenType.Parser do
     {scripts, features, lookupTables}
   end
   defp extractGlyphDefinitionTable(table) do
-    <<_versionMaj::16, _versionMin::16,
+    <<versionMaj::16, versionMin::16,
     glyphClassDef::16, _attachList::16,
     _ligCaretList::16, markAttachClass::16,
-    _::binary>> = table
+    rest::binary>> = table
     # 1.2 also has 16-bit offset to MarkGlyphSetsDef
+    markGlyphSets = if versionMaj >= 1 and versionMin >= 2 do
+      <<markGlyphSets::16, _::binary>> = rest
+      if markGlyphSets == 0, do: nil, else: markGlyphSets
+    else
+      nil
+    end
     # 1.3 also has 32-bit offset to ItemVarStore
     #Logger.debug "GDEF #{versionMaj}.#{versionMin}"
 
@@ -564,7 +570,17 @@ defmodule Gutenex.OpenType.Parser do
     glyphClassDef = if glyphClassDef > 0, do: parseGlyphClass(subtable(table, glyphClassDef)), else: nil
     # mark attachment class (may be NULL; used with flag in GPOS/GSUB lookups)
     markAttachClass = if markAttachClass > 0, do: parseGlyphClass(subtable(table, markAttachClass)), else: nil
-    %{attachments: markAttachClass, classes: glyphClassDef}
+    # mark glyph sets (may be NULL)
+    glyphSets = if markGlyphSets != nil do
+      mgs = subtable(table, markGlyphSets)
+      <<fmt::16, nGlyphSets::16, gsets::binary-size(nGlyphSets)-unit(32), _::binary>> = mgs 
+      for << <<off::32>> <- gsets>>, do: parseCoverage(subtable(mgs, off))
+    else
+      nil
+    end
+
+    _mgs = markGlyphSets
+    %{attachments: markAttachClass, classes: glyphClassDef, mark_sets: glyphSets}
   end
   defp parseFeatures(data) do
     <<nFeatures::16, fl::binary-size(nFeatures)-unit(48), _::binary>> = data
@@ -575,10 +591,16 @@ defmodule Gutenex.OpenType.Parser do
   #returns {lookupType, lookupFlags, [subtable offsets], <<raw table bytes>>}
   defp getLookupTable(offset, data) do
       tbl = subtable(data, offset)
-      <<lookupType::16, flags::16, nsubtables::16, st::binary-size(nsubtables)-unit(16), _::binary>> = tbl
-      #TODO: if flag bit for markfilteringset, also markFilteringSetIndex::16
+      <<lookupType::16, flags::16, nsubtables::16, st::binary-size(nsubtables)-unit(16), rest::binary>> = tbl
+      #if flag bit for markfilteringset, also markFilteringSetIndex::16
+      mfs = if flags &&& 0x0010 do
+        <<mfs::16, _::binary>> = rest
+        mfs
+      else
+        nil
+      end
       subtables = for << <<y::16>> <- st >>, do: y
-      {lookupType, flags, subtables, tbl}
+      {lookupType, flags, subtables, tbl, mfs}
   end
   defp readScriptTable(tag, data, offset) do
     script_table =  subtable(data, offset)

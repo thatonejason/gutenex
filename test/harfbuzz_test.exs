@@ -48,9 +48,9 @@ defmodule GutenexHarfbuzzTest do
     # \u06E1 is a non-spacing combining mark
     # the font incorrectly gives it an advance width of 1000 instead of zero
     # this is a GPOS4 test, not sure why in HB cursive tests
-    #    harfbuzz_test("07f054357ff8638bac3711b422a1e31180bba863.ttf",
-                       #              "\u0606\u06E1", # ARABIC CUBE ROOT, COMBINING MARK (DOTLESS HEAD OF KHAH)
-                       #                  "2@40,502+0|1+1000")
+    # harfbuzz_test("07f054357ff8638bac3711b422a1e31180bba863.ttf",
+                  # "\u0606\u06E1", # ARABIC CUBE ROOT, COMBINING MARK (DOTLESS HEAD OF KHAH)
+                  # "2@40,502+0|1+1000")
   end
 
   test "language-specific glyphs" do
@@ -59,7 +59,11 @@ defmodule GutenexHarfbuzzTest do
   end
 
   test "mark filtering sets" do
-    # we expect the same results regardless of the mark used thanks to mark filtering set specified in font
+    # make sure marks are filtered correctly
+    # mark filtering happens in GPOS table lookup 34 (type 8, chained context pos)
+    harfbuzz_test("f22416c692720a7d46fadf4af99f4c9e094f00b9.ttf",
+                  "\u062A\u062E\u062A\u0629",
+                  "75@299,1170+0|28+502|75@149,690+0|58+532|74@-51,1259+0|73+196|75@655,1751+0|34@0,-358+905")
   end
 
   test "ligID" do

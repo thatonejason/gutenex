@@ -127,13 +127,16 @@ defmodule Gutenex.PDF.TrueType do
     features = if "kern" in features, do: ["palt" | features], else: features
 
     # mark any per-glyph features
-    # TODO: shaper needs to work with glyphs
+    # TODO: shaper should work with glyphs rather than script
     per_glyph_features = Layout.shape_glyphs(script, text)
 
+    # do the subs
     output = glyphs
-    |> handle_substitutions(ttf, script, lang, features, per_glyph_features)
+             |> handle_substitutions(ttf, script, lang, features, per_glyph_features)
+
     {output, pos} = output
-    |> position_glyphs(ttf, script, lang, features)
+                    |> position_glyphs(ttf, script, lang, features)
+    
     {output, pos}
   end
 
@@ -176,14 +179,16 @@ defmodule Gutenex.PDF.TrueType do
           |> List.flatten
           |> Map.new
 
-    # apply the lookups and return the selected glyphs
-    Enum.reduce(lookups, glyphs, fn (x, acc) -> 
+    # apply the lookups and return the resulting {glyphs, pga}
+    # (pga length changes when glyphs length changes)
+    {g, _pga} = Enum.reduce(lookups, {glyphs, per_glyph_assignments}, fn (x, acc) -> 
                 if pgl != nil and Map.has_key?(pgl, x) do
-                  Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, Map.get(pgl, x), per_glyph_assignments, acc)
+                  Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, Map.get(pgl, x), acc)
                 else
-                  Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, nil, nil, acc)
+                  Substitutions.applyLookupGSUB(Enum.at(subL, x), ttf.definitions, subL, nil, acc)
                 end
     end)
+    g
   end
 
   # adjusts positions of glyphs based on script, language, and OpenType features
@@ -219,10 +224,13 @@ defmodule Gutenex.PDF.TrueType do
     # returns glyphs, positioning, cursive attachments, mark attachments
     cursiveDeltas = List.duplicate(0, length(glyphs))
     markDeltas = List.duplicate(0, length(glyphs))
-    {g, p, cDeltas, mDeltas} = Enum.reduce(indices, {glyphs, positions, cursiveDeltas, markDeltas}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
+    {g, p, cDeltas, _mDeltas} = Enum.reduce(indices, {glyphs, positions, cursiveDeltas, markDeltas}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
     # make cursive and mark positioning adjustments
     # first apply any cursive adjustments
-    {p, deltas} = Positioning.adjustCursiveOffset(p, cDeltas)
+    if isRTL do
+      IO.puts "#{inspect g} deltas #{inspect cDeltas}"
+    end
+    {p, _deltas} = Positioning.adjustCursiveOffset(p, cDeltas)
     # then apply any mark adjustments
 
     #if script is RTL, reverse
