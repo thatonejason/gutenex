@@ -598,11 +598,13 @@ defmodule Gutenex.OpenType.Positioning do
   end
 
   # uses the lookup flag to determine which glyphs are ignored
+  # this could be shared with GSUB implementation
   def should_skip_glyph(g, flag, gdef, mfs) do
     # decompose the flag
     <<attachmentType::8, _::3, useMarkFilteringSet::1, ignoreMark::1, ignoreLig::1, ignoreBase::1, _rtl::1>> = <<flag::16>>
 
     # only care about classification if flag set
+    # if only RTL flag don't bother classifying
     glyphClass = if flag > 1 do
       classifyGlyph(g, gdef.classes)
     else
@@ -618,8 +620,6 @@ defmodule Gutenex.OpenType.Positioning do
       ignoreBase == 1 and glyphClass == 1 -> true
       ignoreLig  == 1 and glyphClass == 2 -> true
       ignoreMark == 1 and glyphClass == 3 -> true
-      # DO NOT SKIP if specified mark glyph set but not a mark
-      useMarkFilteringSet == 1 and glyphClass != 3  -> false
       # skip if we have a mark that isn't in specified mark glyph set
       useMarkFilteringSet == 1 and classifyGlyph(g, gdef.classes) == 3 and findCoverageIndex(Enum.at(gdef.mark_sets, mfs), g) == nil -> true
       # skip if we don't match a non-zero attachment type
