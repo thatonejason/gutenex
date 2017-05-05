@@ -124,9 +124,16 @@ defmodule Gutenex.OpenType.Positioning do
                     {entryAnchor, exitAnchor}
                   end)
 
+    # filter the glyphs
+    g = filter_glyphs(glyphs, flag, gdef, mfs) |> Enum.to_list
+
+    # assume no connections
+    deltas = List.duplicate(0, length(c))
+
     # align entry/exit points
-    {p, d} = applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, glyphs, pos, [], [])
-    #Logger.debug "CURSIVE #{inspect glyphs} #{inspect d}"
+    {p, d} = applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, g, pos, deltas)
+
+    # combine with any existing deltas
     cdeltas = c
           |> Enum.with_index
           |> Enum.map(fn {v, i} -> if v != 0, do: v, else: Enum.at(d, i) end)
@@ -288,7 +295,6 @@ defmodule Gutenex.OpenType.Positioning do
         posRecords = for << <<x::16, y::16>> <- substRecs >>, do: {x, y}
 
         g = filter_glyphs(glyphs, flag, gdef, mfs) |> Enum.to_list
-        #positioning = List.duplicate(nil, length(pos))
         applyChainingContextPos3(btCoverage, coverage, laCoverage, posRecords, gdef, lookups, g, pos, [])
       _ ->
         Logger.debug "GPOS 8 - chained contextual positioning format #{format}"
@@ -378,41 +384,23 @@ defmodule Gutenex.OpenType.Positioning do
     applyKerning(coverage, pairSets, glyphs, output)
   end
 
-  defp applyCursive(_coverage, _anchorPairs, _flag, _mfs, _gdef, _isRTL,  [], [], output, deltas), do: {Enum.reverse(output), Enum.reverse(deltas)}
-  defp applyCursive(_coverage, _anchorPairs, _flag, _mfs, _gdef, _isRTL,  [_], [p], output, deltas), do: {Enum.reverse([p | output]), Enum.reverse([0 | deltas])}
-  defp applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, [g, g2 | glyphs], [p, p2 | pos], output, deltas) do
+  defp applyCursive(_coverage, _anchorPairs, _flag, _mfs, _gdef, _isRTL,  [], pos, deltas), do: {pos, deltas}
+  defp applyCursive(_coverage, _anchorPairs, _flag, _mfs, _gdef, _isRTL,  [_], pos, deltas), do: {pos, deltas}
+  defp applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, [{g, gi}, {g2, gi2} | glyphs], pos, deltas) do
+    # flag now ignored!
     # decompose the flag
     <<_attachmentType::8, _::3, _useMark::1, _ignoreMark::1, _ignoreLig::1, _ignoreBase::1, rtl::1>> = <<flag::16>>
 
-    skipCur = should_skip_glyph(g, flag, gdef, mfs)
-
-    #TODO: clean up this mess of compiler warnings
-    skipped = []
-    pskipped = []
-    skipNext = should_skip_glyph(g2, flag, gdef, mfs)
-    if skipNext do
-      gtemp = [g2 | glyphs]
-      ptemp = [p2 | pos]
-      skipped = gtemp |> Enum.take_while(fn x -> should_skip_glyph(x, flag, gdef, mfs) end)
-      numSkipped = length(skipped)
-      if numSkipped < length(gtemp) do 
-        pskipped = ptemp |> Enum.take(numSkipped)
-        [g2 | glyphs] = gtemp |> Enum.drop(numSkipped)
-        [p2 | pos] = ptemp |> Enum.drop(numSkipped)
-        #IO.puts "cursive skip next #{inspect skipped}"
-      else
-        skipped = []
-        pskipped = []
-        skipCur = true
-      end
-    end
 
     curloc = findCoverageIndex(coverage, g)
     nextloc = findCoverageIndex(coverage, g2)
 
 
+    p = Enum.at(pos, gi)
+    p2 = Enum.at(pos, gi2)
+
     # if glyphs are covered
-    [cur, next, gdelta] = if curloc != nil and nextloc != nil and !skipCur do
+    [cur, next, gdelta] = if curloc != nil and nextloc != nil do
       {entryA, _} = Enum.at(anchorPairs, nextloc)
       {_, exitA} = Enum.at(anchorPairs, curloc)
       if exitA != nil and entryA != nil do
@@ -421,7 +409,7 @@ defmodule Gutenex.OpenType.Positioning do
         {_, xOff, yOff, xAdv, yAdv} = p
         {_, x2Off, y2Off, x2Adv, y2Adv} = p2
         delta_y = if rtl, do: entry_y - exit_y, else: exit_y - entry_y
-        index_delta = length(skipped) + 1
+        index_delta = gi2 - gi
 
 
         if isRTL do
@@ -441,7 +429,11 @@ defmodule Gutenex.OpenType.Positioning do
     else
       [p, p2, 0]
     end
-    applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, skipped ++ [g2 | glyphs], pskipped ++ [next | pos], [cur | output], [gdelta | deltas])
+    
+    updated = pos |> List.replace_at(gi, cur) |> List.replace_at(gi2, next)
+    updated_deltas = deltas |> List.replace_at(gi, gdelta)
+
+    applyCursive(coverage, anchorPairs, flag, mfs, gdef, isRTL, [{g2, gi2} | glyphs], updated, updated_deltas)
   end
 
   # adjust the y-offsets of connected glyphs

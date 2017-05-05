@@ -227,9 +227,6 @@ defmodule Gutenex.PDF.TrueType do
     {g, p, cDeltas, _mDeltas} = Enum.reduce(indices, {glyphs, positions, cursiveDeltas, markDeltas}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
     # make cursive and mark positioning adjustments
     # first apply any cursive adjustments
-    if isRTL do
-      IO.puts "#{inspect g} deltas #{inspect cDeltas}"
-    end
     {p, _deltas} = Positioning.adjustCursiveOffset(p, cDeltas)
     # then apply any mark adjustments
 
