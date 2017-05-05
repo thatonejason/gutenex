@@ -183,16 +183,42 @@ defmodule Gutenex.OpenType.Positioning do
   # type 5 - mark to ligature positioning
   def applyLookupGPOS({5, _flag, table, _mfs}, _gdef,_lookups, _isRTL, {glyphs, pos, c, m}) do
     # same as format 4, except "base" is a ligature with (possibly) multiple anchors
-    <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, _nClasses::16, 
-    markArrayOffset::16, _baseArrayOffset::16, _::binary>> = table
+    <<_fmt::16, markCoverageOff::16, baseCoverageOff::16, nClasses::16, 
+    markArrayOffset::16, baseArrayOffset::16, _::binary>> = table
 
     _markCoverage = Parser.parseCoverage(Parser.subtable(table, markCoverageOff))
     _baseCoverage = Parser.parseCoverage(Parser.subtable(table, baseCoverageOff))
 
     markArrayTbl = Parser.subtable(table, markArrayOffset)
     _markArray = Parser.parseMarkArray(markArrayTbl)
+    # base array table
+    baseTbl = Parser.subtable(table, baseArrayOffset)
+    <<nRecs::16, records::binary-size(nRecs)-unit(16), _::binary>> = baseTbl
+    # array of offsets to ligature attach tables
+    la = for << <<off::16>> <- records >>, do: Parser.subtable(baseTbl, off)
+    componentSize = nClasses * 2
+    # each component is array of offsets (size == size of mark array) to anchor tables
+    #  -- one for each mark class including class 0; may be NULL
+    baseArray = la
+    |> Enum.map(fn laTbl ->
+      <<nComponents::16, recs::binary>> = laTbl
+      recs = binary_part(recs, 0, nComponents * componentSize)
+      comps = for << <<record::binary-size(componentSize)>> <- recs >>, do: record
+      comps
+      |> Enum.map(fn r -> for << <<offset::16>> <- r>>, do: offset end)
+      |> Enum.map(&Enum.map(&1, fn o -> 
+      if o != 0, do: Parser.parseAnchor(binary_part(laTbl, o, 6)), else: nil
+      end))
+      end)
 
     Logger.debug "GPOS 5 - mark to ligature"
+    # for this to work, we need to know which ligature component to
+    # attach the mark to -- needs to be set during GSUB 4 processing!
+    # in the absense of such info we could work backwards through the components
+    # until we find one with an attachment point for the current mark class
+    # see https://bugzilla.gnome.org/show_bug.cgi?id=437633 for a torture test
+    # where a 'calt' liga + subsequent 'liga' moves target component for
+    # mark that is itself a ligature!
     {glyphs, pos, c, m}
   end
 
@@ -214,10 +240,10 @@ defmodule Gutenex.OpenType.Positioning do
     # each record is array of offsets
     # 6 bytes is a bit of a cheat, can be 6-10 bytes 
     baseArray = records
-              |> Enum.map(fn r -> for << <<offset::16>> <- r>>, do: offset end)
-              |> Enum.map(&Enum.map(&1, fn o -> 
-                                Parser.parseAnchor(binary_part(baseTbl, o, 6)) end) 
-                        )
+                |> Enum.map(fn r -> for << <<offset::16>> <- r>>, do: offset end)
+                |> Enum.map(&Enum.map(&1, fn o -> 
+                Parser.parseAnchor(binary_part(baseTbl, o, 6)) end) 
+              )
 
     markArrayTbl = Parser.subtable(table, markArrayOffset)
     markArray = Parser.parseMarkArray(markArrayTbl)

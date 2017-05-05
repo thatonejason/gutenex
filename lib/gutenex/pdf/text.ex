@@ -98,11 +98,12 @@ defmodule Gutenex.PDF.Text do
   def write_positioned_glyphs({glyphs, positions}, scale) do
     #TODO: if there is no y positioning/advance can reduce to TJ directive
     #TODO: if no xpos and xadvance == width can group together
-    pos_g = Enum.zip(glyphs, positions)
-    |> Enum.chunk_by(fn {_, {t, _, _, _, _}} -> t end)
-    |> Enum.map_join(" ", fn c -> write_chunk(c, scale / 1000) end)
-#pos_g = Enum.zip(glyphs, positions)
-#            |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, font_size / 1000) end)
+    # chunk processing below *almost* right but falls down on boundaries between chunks
+    #pos_g = Enum.zip(glyphs, positions)
+    #|> Enum.chunk_by(fn {_, {t, _, _, _, _}} -> t end)
+    #|> Enum.map_join(" ", fn c -> write_chunk(c, scale / 1000) end)
+pos_g = Enum.zip(glyphs, positions)
+            |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, scale / 1000) end)
     pos_g <> "\n"
   end
   
@@ -146,7 +147,11 @@ defmodule Gutenex.PDF.Text do
     if xp == 0 and yp == 0 do
       "<#{hex}> Tj #{xa * scale} #{ya * scale} Td"
     else
-      "#{xp * scale} #{yp * scale} Td <#{hex}> Tj #{(xa - xp) * scale} #{(ya - yp) * scale} Td"
+      xpos = xp * scale
+      ypos = yp * scale
+      xadv = xa * scale
+      yadv = ya * scale
+      "#{xpos} #{ypos} Td <#{hex}> Tj #{xadv - xpos} #{yadv - ypos} Td"
     end
   end
 end

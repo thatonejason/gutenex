@@ -230,6 +230,8 @@ defmodule Gutenex.PDF.TrueType do
     {p, _deltas} = Positioning.adjustCursiveOffset(p, cDeltas)
     # then apply any mark adjustments
 
+    # zero out the x and y advances of any marks
+
     #if script is RTL, reverse
     if isRTL do
       {Enum.reverse(g), Enum.reverse(p)}
