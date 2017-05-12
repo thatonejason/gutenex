@@ -6,6 +6,7 @@
 defmodule GutenexHarfbuzzTest do
   use ExUnit.Case
   alias Gutenex.PDF.TrueType, as: TrueType
+  alias Gutenex.OpenType.Layout
 
   # generate a HarfBuzz-style string
   # this allows us to re-use HarfBuzz shaping tests
@@ -29,7 +30,7 @@ defmodule GutenexHarfbuzzTest do
     assert hb == expected
   end
 
-  test "simple text" do
+  test "simple kerning of latin text (GPOS 2)" do
     # expect kerning of VA pair
     harfbuzz_test("49c9f7485c1392fa09a1b801bc2ffea79275f22e.ttf",
                   "VABEabcd",
@@ -81,6 +82,13 @@ defmodule GutenexHarfbuzzTest do
                   "\u062A\u062E\u0679\u0629",
                   "75@299,1520+0|28+502|77@149,690+0|58+532|74@-51,1259+0|73+196|75@655,1751+0|34@0,-358+905")
 
+  end
+
+  test "arabic-like joining (positional shaping)" do
+    # handle Adlam; RTL, arabic shaper, Unicode 9.0, and above BMP
+    harfbuzz_test("5dfad7735c6a67085f1b90d4d497e32907db4c78.ttf",
+                  "\u{1E922}\u{1E923}\u{1E924}\u{1E925}\u{1E926}\u{1E927}\u{1E928}\u{1E929}\u{1E92A}\u{1E92B}\u{1E92C}\u{1E92D}\u{1E92E}\u{1E92F}\u{1E930}\u{1E931}\u{1E932}\u{1E933}\u{1E934}\u{1E935}\u{1E936}\u{1E937}\u{1E938}\u{1E939}\u{1E93A}\u{1E93B}\u{1E93C}\u{1E93D}\u{1E93E}\u{1E93F}\u{1E940}\u{1E941}\u{1E942}\u{1E943}",
+                  "117+711|87+573|141+773|69+594|84+686|129+621|96+555|123+772|102+577|66+552|111+664|72+600|51+662|78+781|126+648|135+553|81+778|99+531|132+651|138+674|57+674|105+640|75+641|63+590|60+628|114+599|48+594|108+492|120+777|45+655|93+525|90+554|54+600|42+597")
   end
 
   test "ligID" do
