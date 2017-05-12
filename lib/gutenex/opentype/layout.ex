@@ -23,10 +23,11 @@ defmodule Gutenex.OpenType.Layout do
 
   def script_to_tag(script) do
   # This maps the Unicode Script property to an OpenType script tag
-  # Data from http=>//www.microsoft.com/typography/otspec/scripttags.htm
-  # and http=>//www.unicode.org/Public/UNIDATA/PropertyValueAliases.txt.
+  # Data from http://www.microsoft.com/typography/otspec/scripttags.htm
+  # and http://www.unicode.org/Public/UNIDATA/PropertyValueAliases.txt.
+  #
+  # Updated through to Unicode 10.0
   unicode_scripts = %{
-  "Adlam" => "adlm",
   "Ahom" => "ahom",
   "Anatolian_Hieroglyphs" => "hluw",
   "Caucasian_Albanian" => "aghb",
@@ -111,7 +112,7 @@ defmodule Gutenex.OpenType.Layout do
   "Ogham"=> "ogam",
   "Ol_Chiki"=> "olck",
   "Old_Turkic"=> "orkh",
-  "Odia"=> "orya",
+  "Odia"=> ["ory2", "orya"],
   "Osmanya"=> "osma",
   "Palmyrene"=> "palm",
   "Pau_Cin_Hau"=> "pauc",
@@ -140,7 +141,7 @@ defmodule Gutenex.OpenType.Layout do
   "Takri"=> "takr",
   "Tai_Le"=> "tale",
   "New_Tai_Lue"=> "talu",
-  "Tamil"=> "taml",
+  "Tamil"=> ["tml2", "taml"],
   "Tai_Viet"=> "tavt",
   "Telugu"=> ["tel2", "telu"],
   "Tifinagh"=> "tfng",
@@ -155,12 +156,55 @@ defmodule Gutenex.OpenType.Layout do
   "Old_Persian"=> "xpeo",
   "Cuneiform"=> "xsux",
   "Yi"=> "yi  ",
+
+  # Unicode 8.0
+  "Hatran" => "hatr",
+  "Multani" => "mult",
+  "Old_Hungarian" => "hung",
+  "SignWriting" => "sgnw",
+
+  # Unicode 9.0
+  "Adlam" => "adlm",
+  "Bhaisuki" => "bhks",
+  "Marchen" => "marc",
+  "Newa" => "newa",
+  "Osage" => "osge",
+  "Tangut" => "tang",
+
+  # Unicode 10.0
+  "Masaram_Gondi" => "gonm",
+  "Nushu" => "nshu",
+  "Soyombo" => "soyo",
+  "Zanabazar_Square" => "zanb",
+
+  # always at the bottom as they are special
   "Inherited"=> "zinh",
   "Common"=> "zyyy",
   "Unknown"=> "zzzz"
 }
 
     Map.get(unicode_scripts, script, "zzzz")
+  end
+
+  # this list comes from ISO 15924
+  # There's a handy sortable table on
+  # https://en.wikipedia.org/wiki/ISO_15924
+  #
+  # Updated through to Unicode 10.0
+  def right_to_left?(script) do
+    rtl_scripts = [
+      # unicode 7.0
+      "arab", "hebr", "syrc", "thaa", "cprt",
+      "khar", "phnx", "nko ", "lydi", "avst",
+      "armi", "phli", "prti", "sarb", "orkh",
+      "samr", "mand", "merc", "mero", "mani",
+      "mend", "nbat", "narb", "palm", "phlp",
+      # unicode 8.0
+      "hatr", "hung",
+      # unicode 9.0
+      "adlm"
+    ]
+    script in rtl_scripts
   end
 
   def detect_script(text) do
@@ -318,7 +362,9 @@ defmodule Gutenex.OpenType.Layout do
   end
 
   # shape arabic and other cursive scripts
-  def shape_glyphs("arab", text) do
+  # arabic, mongolian, syriac, n'ko, phags pa,
+  # mandiac, manichaean, psalter pahlavi
+  def shape_glyphs(script, text) when script in ["arab", "mong", "syrc", "nko ", "phag", "mand", "mani", "phlp"] do
     # TODO: use glyphs as input rather than text
     # convert back to unicode codepoints
     features = ["isol", "medi", "init", "fina", "med2", "fin2", "fin3"]
