@@ -1,6 +1,6 @@
 # Gutenex
 
-[![Build Status](https://travis-ci.org/SenecaSystems/gutenex.svg?branch=master)](https://travis-ci.org/SenecaSystems/gutenex)
+[![Build Status](https://travis-ci.org/jbowtie/gutenex.svg?branch=opentype)](https://travis-ci.org/jbowtie/gutenex)
 
 PDF generation!
 
