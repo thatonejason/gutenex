@@ -65,7 +65,7 @@ defmodule GutenexFontTest do
     xpos = pos |> Enum.map(fn {_,x,_,_,_} -> x end)
     xadv = pos |> Enum.map(fn {_,_,_,x,_} -> x end)
     # mark has an xOffset
-    assert xpos == [0, 0, 942, 0]
+    assert xpos == [0, 0, 317, 0]
     # mark has zero width
     assert xadv == [1296, 625, 0, 1296]
   end

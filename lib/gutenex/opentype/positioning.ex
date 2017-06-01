@@ -167,17 +167,26 @@ defmodule Gutenex.OpenType.Positioning do
     markArrayTbl = Parser.subtable(table, markArrayOffset)
     markArray = Parser.parseMarkArray(markArrayTbl)
 
-    # mark attachment classes
-    adjusted = applyMarkToBase(markCoverage, baseCoverage, 
+    # filter the glyphs
+    g = filter_glyphs(glyphs, flag, gdef, mfs) |> Enum.to_list
+
+    # assume no connections
+    deltas = List.duplicate(0, length(c))
+
+    # align attachment points
+    {adjusted, d} = applyMarkToBase(markCoverage, baseCoverage, 
                                baseArray, markArray, 
                                # skip flags and GDEF info
                                flag, mfs, gdef, 
-                               #prev and next details
-                               [hd(glyphs)], tl(glyphs), pos, [nil])
+                               [], g, pos, deltas)
 
+    # combine with any existing deltas
+    mdeltas = m
+          |> Enum.with_index
+          |> Enum.map(fn {v, i} -> if v != 0, do: v, else: Enum.at(d, i) end)
     # apply the adjustments to positioning
-    positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    {glyphs, positioning, c, m}
+    # positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
+    {glyphs, adjusted, c, mdeltas}
   end
 
   # type 5 - mark to ligature positioning
@@ -248,10 +257,11 @@ defmodule Gutenex.OpenType.Positioning do
     markArrayTbl = Parser.subtable(table, markArrayOffset)
     markArray = Parser.parseMarkArray(markArrayTbl)
 
-    adjusted = applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, flag, mfs, gdef, [hd(glyphs)], tl(glyphs), pos, [nil])
+    # adjusted = applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, flag, mfs, gdef, [hd(glyphs)], tl(glyphs), pos, [nil])
     #Logger.debug "MKMK #{inspect glyphs} #{inspect adjusted}"
-    positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
-    {glyphs, positioning, c, m}
+    # positioning = Enum.zip(pos, adjusted) |> Enum.map(fn {v1, v2} -> addPos(v1,v2) end)
+    # {glyphs, positioning, c, m}
+    {glyphs, pos, c, m}
   end
 
   # type 7 - contextual positioning
@@ -335,33 +345,39 @@ defmodule Gutenex.OpenType.Positioning do
     {glyphs, pos, c, m}
   end
 
-  defp applyMarkToBase(_markCoverage, _baseCoverage, _baseArray, _markArray, _lookupFlag, _mfs, _gdef, _prev, [], _, output), do: Enum.reverse(output)
-  defp applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, prev, [g | glyphs], [prev_pos | pos], output) do
+  defp applyMarkToBase(_markCoverage, _baseCoverage, _baseArray, _markArray, _lookupFlag, _mfs, _gdef, _prev, [], pos, deltas), do: {pos, deltas}
+  defp applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, [], [{g, gi} | glyphs], pos, deltas) do
+    applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, [{g, gi}], glyphs, pos, deltas)
+  end
+  defp applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, prev, [{g, gi} | glyphs], pos, deltas) do
     # should we skip this glyph?
     skipMark = should_skip_glyph(g, lookupFlag, gdef, mfs)
+    markloc = findCoverageIndex(markCoverage, g)
 
     # TODO: this code assumes prev is a base
-    markloc = findCoverageIndex(markCoverage, g)
-    baseloc = findCoverageIndex(baseCoverage, hd(prev))
-    mark_offset = if markloc != nil and baseloc != nil and !skipMark do
+    {base_glyph, prev_i} = if gdef != nil do
+      # find a base
+      Enum.find(prev, fn {x, _} -> classifyGlyph(x, gdef.classes) == 1 end)
+    else
+      hd(prev)
+    end
+
+    baseloc = findCoverageIndex(baseCoverage, base_glyph)
+
+    {mark_offset, delta} = if markloc != nil and baseloc != nil and !skipMark do
       b = Enum.at(baseArray, baseloc)
       {class, {mark_x, mark_y}} = Enum.at(markArray, markloc)
       {base_x, base_y} = Enum.at(b, class)
       # align the anchors
       {off_x, off_y} = {base_x - mark_x, base_y - mark_y}
-      # TODO: possibly do the base calculations later when actually rendering?
-      #   doing so requires us to save mark/base relationship somewhere
-      #   but potentially gives more accurate results
-      # get the base positioning
-      {_, box, boy, bax, bay} = prev_pos
-      # mark_offset = (base_offset + offset - base_advance)
-      # Logger.debug "OFFSET #{off_x} base #{base_x} mark #{mark_x} less #{bax}"
-      #{box + off_x - bax, boy + off_y - bay, 0, 0}
-      {box + off_x, boy + off_y, 0, 0}
+      index_delta = gi - prev_i
+      {{:pos, off_x, off_y, 0, 0}, -index_delta}
     else
-      nil
+      {Enum.at(pos, gi), 0}
     end
-    applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, [g | prev], glyphs, pos, [mark_offset | output])
+    updated = pos |> List.replace_at(gi, mark_offset)
+    updated_deltas = deltas |> List.replace_at(gi, delta)
+    applyMarkToBase(markCoverage, baseCoverage, baseArray, markArray, lookupFlag, mfs, gdef, [{g, gi} | prev], glyphs, updated, updated_deltas)
   end
 
   defp applyKerning2(_classDef1, _clasDef2, _pairSets, [], output), do: output
@@ -483,6 +499,30 @@ defmodule Gutenex.OpenType.Positioning do
       {List.replace_at(p2, index, {type, xo, yo + yo2, xa, ya}), d2}
     end
 
+  end
+
+  # adjust marks relative to base
+  def adjustMarkOffsets(positions, deltas, is_rtl) do
+    0..length(deltas)-1
+    |> Enum.reduce({positions, deltas}, fn (x, {p, d}) -> adjustMarkOffsets(x, p, d, is_rtl) end)
+  end
+
+  def adjustMarkOffsets(index, positions, deltas, is_rtl) do
+    d = Enum.at(deltas, index)
+    if d == 0 do
+      {positions, deltas}
+    else
+      base = index + d
+      {_, box, boy, bax, bay} = Enum.at(positions, base)
+      {type, mox, moy, _max, _may} = Enum.at(positions, index)
+      adjusted = if is_rtl do
+        {type, box + mox, boy + moy, 0, 0}
+      else
+        # LTR marks subtract the base advance
+        {type, box + mox - bax, boy + moy - bay, 0, 0}
+      end
+      {List.replace_at(positions, index, adjusted), List.replace_at(deltas, index, 0)}
+    end
   end
 
   # class-based context

@@ -223,13 +223,13 @@ defmodule Gutenex.PDF.TrueType do
     # returns glyphs, positioning, cursive attachments, mark attachments
     cursiveDeltas = List.duplicate(0, length(glyphs))
     markDeltas = List.duplicate(0, length(glyphs))
-    {g, p, cDeltas, _mDeltas} = Enum.reduce(indices, {glyphs, positions, cursiveDeltas, markDeltas}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
+    {g, p, cDeltas, mDeltas} = Enum.reduce(indices, {glyphs, positions, cursiveDeltas, markDeltas}, fn (x, acc) -> Positioning.applyLookupGPOS(Enum.at(lookups, x), ttf.definitions, lookups, isRTL, acc) end)
     # make cursive and mark positioning adjustments
     # first apply any cursive adjustments
     {p, _deltas} = Positioning.adjustCursiveOffset(p, cDeltas)
     # then apply any mark adjustments
+    {p, _deltas} = Positioning.adjustMarkOffsets(p, mDeltas, isRTL)
 
-    # zero out the x and y advances of any marks
 
     #if script is RTL, reverse
     if isRTL do

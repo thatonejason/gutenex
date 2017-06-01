@@ -274,13 +274,6 @@ defmodule Gutenex.OpenType.Substitutions do
   end
   defp applyLigature(_coverage, _ligatures, [], output), do: output
   defp applyLigature(coverage, ligatures, [g | glyphs], output) do
-    #  flag:
-    #  x02 ignore base glyphs (see GDEF)
-    #  x04 ignore ligatures (see GDEF)
-    #  x08 ignore marks (see GDEF)
-    #  x10 useMarkFilteringSet (MarkFilteringSet field in lookup, xref GDEF)
-    #  0xFF00 MarkAttachmentType (skip all but specified mark type, xref GDEF)
-
     # get the index of a ligature set that might apply
     coverloc = findCoverageIndex(coverage, g)
     {output, glyphs} = if coverloc != nil do
