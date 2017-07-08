@@ -6,7 +6,6 @@
 defmodule GutenexHarfbuzzTest do
   use ExUnit.Case
   alias Gutenex.PDF.TrueType, as: TrueType
-  alias Gutenex.OpenType.Layout
 
   # generate a HarfBuzz-style string
   # this allows us to re-use HarfBuzz shaping tests
@@ -49,9 +48,9 @@ defmodule GutenexHarfbuzzTest do
     # \u06E1 is a non-spacing combining mark
     # the font incorrectly gives it an advance width of 1000 instead of zero
     # this is a GPOS4 test, not sure why in HB cursive tests
-    # harfbuzz_test("07f054357ff8638bac3711b422a1e31180bba863.ttf",
-                  # "\u0606\u06E1", # ARABIC CUBE ROOT, COMBINING MARK (DOTLESS HEAD OF KHAH)
-                  # "2@40,502+0|1+1000")
+     harfbuzz_test("07f054357ff8638bac3711b422a1e31180bba863.ttf",
+                   "\u0606\u06E1", # ARABIC CUBE ROOT, COMBINING MARK (DOTLESS HEAD OF KHAH)
+                   "2@40,502+0|1+1000")
   end
 
   test "language-specific glyphs" do

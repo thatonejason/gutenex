@@ -18,7 +18,7 @@ defmodule Gutenex.Mixfile do
     [applications: [:logger]]
   end
 
-  defp deps do
+  defp deps() do
     [
       {:imagineer, "~> 0.2.1" },
       {:earmark, "~> 1.0.2", only: :dev},
@@ -26,13 +26,13 @@ defmodule Gutenex.Mixfile do
     ]
   end
 
-  defp description do
+  defp description() do
     """
     PDF Generation in Elixir
     """
   end
 
-  defp package do
+  defp package() do
     [
       licenses: ["MIT"],
       links: %{github: "https://github.com/SenecaSystems/gutenex"},
