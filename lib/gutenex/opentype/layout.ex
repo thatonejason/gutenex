@@ -3,7 +3,6 @@ defmodule Gutenex.OpenType.Layout do
 
   def detect_script(text) do
     x = String.codepoints(text)
-    |> Stream.map(fn <<x::utf8>> -> x end)
     |> Stream.map(&UnicodeData.script_from_codepoint(&1))
     |> Stream.filter(fn x -> !(x in ["Common", "Inherited", "Unknown"]) end)
     |> Enum.to_list
