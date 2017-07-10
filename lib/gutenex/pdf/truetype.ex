@@ -1,6 +1,7 @@
 defmodule Gutenex.PDF.OpenTypeFont do
   use GenServer
   alias Gutenex.PDF.TrueType
+  alias UnicodeData
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, :ok, opts)
@@ -218,7 +219,7 @@ defmodule Gutenex.PDF.TrueType do
                |> Enum.sort
                |> Enum.uniq
 
-    isRTL = Layout.right_to_left?(script)
+    isRTL = UnicodeData.right_to_left?(script)
     # apply the lookups
     # returns glyphs, positioning, cursive attachments, mark attachments
     cursiveDeltas = List.duplicate(0, length(glyphs))
