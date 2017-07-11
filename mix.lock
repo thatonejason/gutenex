@@ -2,4 +2,5 @@
   "earmark": {:hex, :earmark, "1.0.3", "89bdbaf2aca8bbb5c97d8b3b55c5dd0cff517ecc78d417e87f1d0982e514557b", [:mix], []},
   "ex_doc": {:hex, :ex_doc, "0.14.5", "c0433c8117e948404d93ca69411dd575ec6be39b47802e81ca8d91017a0cf83c", [:mix], [{:earmark, "~> 1.0", [hex: :earmark, optional: false]}]},
   "imagineer": {:hex, :imagineer, "0.2.1", "b426707d1c8326cab81ce4d3f5e029283776a7b806db9dbc51306eb2e1451aa6", [:mix], [{:apex, "~>0.3.2", [hex: :apex, optional: false]}]},
+  "opentype_elixir": {:git, "https://github.com/jbowtie/opentype-elixir.git", "7828541908d86e9c9c3d52252114046cfb23a5b1", []},
   "unicode_data": {:hex, :unicode_data, "0.1.2", "9b28e534c15270075bebd4fd934f960685b99634cc4151015ac2899dff4b4ee9", [:mix], []}}

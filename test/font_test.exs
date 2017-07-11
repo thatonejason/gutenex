@@ -1,8 +1,8 @@
 defmodule GutenexFontTest do
   use ExUnit.Case
-  alias Gutenex.PDF.TrueType, as: TrueType
-  alias Gutenex.PDF.OpenTypeFont
-  alias Gutenex.OpenType.Layout
+  alias OpenType, as: TrueType
+  alias OpenTypeFont
+  alias OpenType.Layout
 
   test "parse Truetype font metrics" do
     ttf = TrueType.new

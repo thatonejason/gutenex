@@ -1,7 +1,7 @@
 defmodule Gutenex.PDF.Builders.FontBuilder do
   alias Gutenex.PDF.Context
   alias Gutenex.PDF.RenderContext
-  alias Gutenex.PDF.OpenTypeFont
+  alias OpenTypeFont
 
   # Builds each font object, adding the font objects and references to the
   # render context. Returns {render_context, context}
