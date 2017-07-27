@@ -21,8 +21,8 @@ defmodule Gutenex.Mixfile do
   defp deps() do
     [
       {:imagineer, "~> 0.2.1" },
-      {:unicode_data, "~> 0.1.2"},
-      {:opentype_elixir, github: "jbowtie/opentype-elixir"},
+      {:unicode_data, "~> 0.4.0"},
+      {:opentype, "~> 0.2.1"},
       {:earmark, "~> 1.0.2", only: :dev},
       {:ex_doc, "~> 0.14.3", only: :dev }
     ]
