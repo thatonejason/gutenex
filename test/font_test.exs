@@ -1,7 +1,7 @@
 defmodule GutenexFontTest do
   use ExUnit.Case
   alias OpenType, as: TrueType
-  alias OpenTypeFont
+  alias OpenType.Font, as: OpenTypeFont
 
   test "register parsed font" do
     {:ok, pid} = Gutenex.start_link

@@ -2,6 +2,6 @@
   "earmark": {:hex, :earmark, "1.0.3", "89bdbaf2aca8bbb5c97d8b3b55c5dd0cff517ecc78d417e87f1d0982e514557b", [:mix], []},
   "ex_doc": {:hex, :ex_doc, "0.14.5", "c0433c8117e948404d93ca69411dd575ec6be39b47802e81ca8d91017a0cf83c", [:mix], [{:earmark, "~> 1.0", [hex: :earmark, optional: false]}]},
   "imagineer": {:hex, :imagineer, "0.2.1", "b426707d1c8326cab81ce4d3f5e029283776a7b806db9dbc51306eb2e1451aa6", [:mix], [{:apex, "~>0.3.2", [hex: :apex, optional: false]}]},
-  "opentype": {:hex, :opentype, "0.2.1", "93c9834dac06d4492459d6d90c59c5dd1c4ce676d64b8eb1e2b0d080d66b70f3", [:mix], [{:unicode_data, "~> 0.4.0", [hex: :unicode_data, optional: false]}]},
+  "opentype": {:hex, :opentype, "0.3.0", "5f6c62a9d5a2741f53575fc3bd6439b272f95563b6b8baffcc4301e14bc47903", [:mix], [{:unicode_data, "~> 0.4.0", [hex: :unicode_data, optional: false]}]},
   "opentype_elixir": {:git, "https://github.com/jbowtie/opentype-elixir.git", "7828541908d86e9c9c3d52252114046cfb23a5b1", []},
   "unicode_data": {:hex, :unicode_data, "0.4.0", "4aed7c9c2e881e45cdec330d1602eb4a047350270e56767775767bdd4bca6b1f", [:mix], []}}
