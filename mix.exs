@@ -8,9 +8,9 @@ defmodule Gutenex.Mixfile do
       version: "0.2.0",
       source_url: "https://github.com/SenecaSystems/gutenex",
       elixir: "~> 1.0",
-      deps: deps,
-      description: description,
-      package: package
+      deps: deps(),
+      description: description(),
+      package: package()
    ]
   end
 
@@ -21,8 +21,9 @@ defmodule Gutenex.Mixfile do
   defp deps do
     [
       {:imagineer, "~> 0.2.1" },
-      {:earmark, "~> 1.0.2", only: :dev},
-      {:ex_doc, "~> 0.14.3", only: :dev }
+      #{:opentype, "~> 0.3.0" },
+      {:earmark, "~> 1.2", only: :dev},
+      {:ex_doc, "~> 0.16.4", only: :dev }
     ]
   end
 
