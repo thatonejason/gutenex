@@ -3,8 +3,8 @@ defmodule Gutenex do
   alias Gutenex.PDF
   alias Gutenex.PDF.Context
   alias Gutenex.PDF.Text
-  alias Gutenex.PDF.OpenTypeFont
   alias Gutenex.PDF.Font
+  alias OpenType.Font, as: OpenTypeFont
 
   alias Gutenex.Geometry
 
