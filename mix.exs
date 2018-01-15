@@ -18,7 +18,7 @@ defmodule Gutenex.Mixfile do
     [applications: [:logger]]
   end
 
-  defp deps do
+  defp deps() do
     [
       {:imagineer, "~> 0.2.1" },
       #{:opentype, "~> 0.3.0" },
@@ -27,17 +27,17 @@ defmodule Gutenex.Mixfile do
     ]
   end
 
-  defp description do
+  defp description() do
     """
     PDF Generation in Elixir
     """
   end
 
-  defp package do
+  defp package() do
     [
       licenses: ["MIT"],
       links: %{github: "https://github.com/SenecaSystems/gutenex"},
-      contributors: ["Chris Maddox"]
+      contributors: ["Chris Maddox", "John C Barstow"]
     ]
   end
 end
