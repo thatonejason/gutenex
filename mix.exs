@@ -7,7 +7,7 @@ defmodule Gutenex.Mixfile do
       name: "Gutenex",
       version: "0.2.0",
       source_url: "https://github.com/SenecaSystems/gutenex",
-      elixir: "~> 1.0",
+      elixir: "~> 1.5",
       deps: deps(),
       description: description(),
       package: package()
@@ -20,7 +20,7 @@ defmodule Gutenex.Mixfile do
 
   defp deps() do
     [
-      {:imagineer, "~> 0.2.1" },
+      {:imagineer, github: "jbowtie/imagineer", ref: "fix_1_6_exceptions"},
       #{:opentype, "~> 0.3.0" },
       {:earmark, "~> 1.2", only: :dev},
       {:ex_doc, "~> 0.16.4", only: :dev }

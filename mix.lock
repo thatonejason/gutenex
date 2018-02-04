@@ -1,6 +1,8 @@
-%{"apex": {:hex, :apex, "0.3.7", "0e4b39ff34d740da9898e368995fdaab2fe4d2a444a6bbe23ccffb3c6978b92c", [:mix], []},
-  "earmark": {:hex, :earmark, "1.2.3", "206eb2e2ac1a794aa5256f3982de7a76bf4579ff91cb28d0e17ea2c9491e46a4", [:mix], []},
-  "ex_doc": {:hex, :ex_doc, "0.16.4", "4bf6b82d4f0a643b500366ed7134896e8cccdbab4d1a7a35524951b25b1ec9f0", [:mix], [{:earmark, "~> 1.1", [hex: :earmark, optional: false]}]},
-  "imagineer": {:hex, :imagineer, "0.2.1", "b426707d1c8326cab81ce4d3f5e029283776a7b806db9dbc51306eb2e1451aa6", [:mix], [{:apex, "~>0.3.2", [hex: :apex, optional: false]}]},
+%{
+  "apex": {:hex, :apex, "1.0.0", "abf230314d35ca4c48a902f693247f190ad42fc14862b9c4f7dbb7077b21c20a", [:mix], [], "hexpm"},
+  "earmark": {:hex, :earmark, "1.2.3", "206eb2e2ac1a794aa5256f3982de7a76bf4579ff91cb28d0e17ea2c9491e46a4", [:mix], [], "hexpm"},
+  "ex_doc": {:hex, :ex_doc, "0.16.4", "4bf6b82d4f0a643b500366ed7134896e8cccdbab4d1a7a35524951b25b1ec9f0", [:mix], [{:earmark, "~> 1.1", [repo: "hexpm", hex: :earmark, optional: false]}], "hexpm"},
+  "imagineer": {:git, "https://github.com/jbowtie/imagineer.git", "710180ac1e14b16eb36be151e9760acd72718a03", [ref: "fix_1_6_exceptions"]},
   "opentype": {:hex, :opentype, "0.3.0", "5f6c62a9d5a2741f53575fc3bd6439b272f95563b6b8baffcc4301e14bc47903", [:mix], [{:unicode_data, "~> 0.4.0", [hex: :unicode_data, optional: false]}]},
-  "unicode_data": {:hex, :unicode_data, "0.4.0", "4aed7c9c2e881e45cdec330d1602eb4a047350270e56767775767bdd4bca6b1f", [:mix], []}}
+  "unicode_data": {:hex, :unicode_data, "0.4.0", "4aed7c9c2e881e45cdec330d1602eb4a047350270e56767775767bdd4bca6b1f", [:mix], []},
+}
