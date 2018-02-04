@@ -11,7 +11,7 @@ defmodule Gutenex.Mixfile do
       deps: deps(),
       description: description(),
       package: package()
-   ]
+    ]
   end
 
   def application do
@@ -21,9 +21,9 @@ defmodule Gutenex.Mixfile do
   defp deps() do
     [
       {:imagineer, github: "jbowtie/imagineer", ref: "fix_1_6_exceptions"},
-      #{:opentype, "~> 0.3.0" },
+      # {:opentype, "~> 0.3.0" },
       {:earmark, "~> 1.2", only: :dev},
-      {:ex_doc, "~> 0.16.4", only: :dev }
+      {:ex_doc, "~> 0.16.4", only: :dev}
     ]
   end
 

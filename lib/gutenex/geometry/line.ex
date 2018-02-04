@@ -6,9 +6,7 @@ defmodule Gutenex.Geometry.Line do
   end
 
   def line({from_point, to_point}) do
-    move_to(from_point) <>
-    draw_line(to_point) <>
-    "S\n"
+    move_to(from_point) <> draw_line(to_point) <> "S\n"
   end
 
   def line({from_x, from_y}, {to_x, to_y}) do
