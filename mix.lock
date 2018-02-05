@@ -3,6 +3,6 @@
   "earmark": {:hex, :earmark, "1.2.3", "206eb2e2ac1a794aa5256f3982de7a76bf4579ff91cb28d0e17ea2c9491e46a4", [:mix], [], "hexpm"},
   "ex_doc": {:hex, :ex_doc, "0.16.4", "4bf6b82d4f0a643b500366ed7134896e8cccdbab4d1a7a35524951b25b1ec9f0", [:mix], [{:earmark, "~> 1.1", [repo: "hexpm", hex: :earmark, optional: false]}], "hexpm"},
   "imagineer": {:git, "https://github.com/jbowtie/imagineer.git", "710180ac1e14b16eb36be151e9760acd72718a03", [ref: "fix_1_6_exceptions"]},
-  "opentype": {:hex, :opentype, "0.3.0", "5f6c62a9d5a2741f53575fc3bd6439b272f95563b6b8baffcc4301e14bc47903", [:mix], [{:unicode_data, "~> 0.4.0", [hex: :unicode_data, optional: false]}]},
-  "unicode_data": {:hex, :unicode_data, "0.4.0", "4aed7c9c2e881e45cdec330d1602eb4a047350270e56767775767bdd4bca6b1f", [:mix], []},
+  "opentype": {:hex, :opentype, "0.5.0", "9dfd4a2dac96dc7f0ffb8f10e4be3fbb0e779f33ed5f04771b384f7e5e7946a6", [:mix], [{:unicode_data, "~> 0.6.0", [hex: :unicode_data, repo: "hexpm", optional: false]}], "hexpm"},
+  "unicode_data": {:hex, :unicode_data, "0.6.0", "ab54218d82851a730f5ac4e52759e7e045add04de1f5e5ab25ce0c8cb0312450", [:mix], [], "hexpm"},
 }
