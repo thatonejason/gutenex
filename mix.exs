@@ -7,36 +7,37 @@ defmodule Gutenex.Mixfile do
       name: "Gutenex",
       version: "0.2.0",
       source_url: "https://github.com/SenecaSystems/gutenex",
-      elixir: "~> 1.0",
-      deps: deps,
-      description: description,
-      package: package
-   ]
+      elixir: "~> 1.5",
+      deps: deps(),
+      description: description(),
+      package: package()
+    ]
   end
 
   def application do
     [applications: [:logger]]
   end
 
-  defp deps do
+  defp deps() do
     [
-      {:imagineer, "~> 0.1" },
-      {:earmark, "~> 0.1", only: :dev},
-      {:ex_doc, "~> 0.6", only: :dev }
+      {:imagineer, github: "jbowtie/imagineer", ref: "fix_1_6_exceptions"},
+      {:opentype, "~> 0.5.0" },
+      {:earmark, "~> 1.2", only: :dev},
+      {:ex_doc, "~> 0.16.4", only: :dev}
     ]
   end
 
-  defp description do
+  defp description() do
     """
     PDF Generation in Elixir
     """
   end
 
-  defp package do
+  defp package() do
     [
       licenses: ["MIT"],
       links: %{github: "https://github.com/SenecaSystems/gutenex"},
-      contributors: ["Chris Maddox"]
+      contributors: ["Chris Maddox", "John C Barstow"]
     ]
   end
 end

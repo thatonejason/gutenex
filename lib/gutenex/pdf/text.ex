@@ -17,8 +17,19 @@ defmodule Gutenex.PDF.Text do
     @break_text_marker
   end
 
+  # ACTUALLY we want to write out a stream
+  # of glyph IDs rather than raw text
   def write_text(text_to_write) do
     "(#{escape(text_to_write)}) Tj\n"
+  end
+
+  def hexstring(text) do
+    hex =
+      text
+      |> :unicode.characters_to_binary(:unicode, :utf16)
+      |> Base.encode16()
+
+    "<#{hex}> Tj\n"
   end
 
   def write_text_br(text_to_write) do
@@ -28,7 +39,6 @@ defmodule Gutenex.PDF.Text do
   def render_mode(mode) do
     "#{text_fill(mode)} Tr\n"
   end
-  
 
   # :fill                 Fill text
   # :stroke               Stroke text
@@ -38,15 +48,14 @@ defmodule Gutenex.PDF.Text do
   # :stroke_clip          Stroke text and add to path for clipping
   # :fill_stroke_clip     Fill, then stroke text and add to path for clipping
   # :clip                 Add text to path for clipping
-  def text_fill(:fill),             do: 0
-  def text_fill(:stroke),           do: 1
-  def text_fill(:fill_stroke),      do: 2
-  def text_fill(:invisible),        do: 3
-  def text_fill(:fill_clip),        do: 4
-  def text_fill(:stroke_clip),      do: 5
+  def text_fill(:fill), do: 0
+  def text_fill(:stroke), do: 1
+  def text_fill(:fill_stroke), do: 2
+  def text_fill(:invisible), do: 3
+  def text_fill(:fill_clip), do: 4
+  def text_fill(:stroke_clip), do: 5
   def text_fill(:fill_stroke_clip), do: 6
-  def text_fill(:clip),             do: 7
-  
+  def text_fill(:clip), do: 7
 
   # Moves to the next line and positions the cursor offset by
   # (x_coordinate, y_coordinate)
@@ -71,7 +80,7 @@ defmodule Gutenex.PDF.Text do
   # It is very important to achieve webscale
   defp normalized_scale_percentage(:web), do: 9001
   defp normalized_scale_percentage(anything_else), do: anything_else
-  
+
   # Set the word spacing, Tw, to `spacing`, a number 
   # expressed in unscaled text space units. Word spacing is used by 
   # the Tj, TJ, and ' operators. Initial value: 0. 
@@ -84,5 +93,73 @@ defmodule Gutenex.PDF.Text do
   # " operators. Initial value: 0. 
   def line_spacing(spacing) do
     "#{spacing} TL\n"
+  end
+
+  def write_positioned_glyphs({glyphs, positions}, scale) do
+    # TODO: if there is no y positioning/advance can reduce to TJ directive
+    # TODO: if no xpos and xadvance == width can group together
+    # chunk processing below *almost* right but falls down on boundaries between chunks
+    # pos_g = Enum.zip(glyphs, positions)
+    # |> Enum.chunk_by(fn {_, {t, _, _, _, _}} -> t end)
+    # |> Enum.map_join(" ", fn c -> write_chunk(c, scale / 1000) end)
+    pos_g =
+      Enum.zip(glyphs, positions)
+      |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, scale / 1000) end)
+
+    pos_g <> "\n"
+  end
+
+  defp write_chunk([c | chunks], scale) do
+    {_, {t, _, _, _, _}} = c
+    a = [c | chunks]
+
+    case t do
+      :std_width -> write_run(t, a)
+      :kern -> write_run(t, a, scale)
+      :pos -> write_run(t, a, scale)
+      _ -> ""
+    end
+  end
+
+  defp write_run(:std_width, run) do
+    hex =
+      run
+      |> Enum.map_join("", fn {g, _} ->
+        Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+      end)
+
+    "<#{hex}> Tj"
+  end
+
+  defp write_run(:kern, run, scale) do
+    hex =
+      run
+      |> Enum.map_join(" ", fn {g, {:kern, _, _, xa, _}} ->
+        h = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+        w = trunc(xa * scale) |> Integer.to_string()
+        "<#{h}> #{w}"
+      end)
+
+    "[#{hex}] TJ"
+  end
+
+  defp write_run(:pos, run, scale) do
+    run
+    |> Enum.map_join(" ", fn {g, pos} -> position_glyph(g, pos, scale) end)
+  end
+
+  defp position_glyph(g, pos, scale) do
+    {type, xp, yp, xa, ya} = pos
+    hex = Integer.to_string(g, 16) |> String.pad_leading(4, "0")
+
+    if xp == 0 and yp == 0 do
+      "<#{hex}> Tj #{xa * scale} #{ya * scale} Td"
+    else
+      xpos = xp * scale
+      ypos = yp * scale
+      xadv = xa * scale
+      yadv = ya * scale
+      "#{xpos} #{ypos} Td <#{hex}> Tj #{xadv - xpos} #{yadv - ypos} Td"
+    end
   end
 end

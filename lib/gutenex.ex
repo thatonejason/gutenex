@@ -4,6 +4,7 @@ defmodule Gutenex do
   alias Gutenex.PDF.Context
   alias Gutenex.PDF.Text
   alias Gutenex.PDF.Font
+  alias OpenType.Font, as: OpenTypeFont
 
   alias Gutenex.Geometry
 
@@ -100,6 +101,22 @@ defmodule Gutenex do
   end
 
   @doc """
+  Activate an OpenType feature
+  """
+  def activate_feature(pid, tag) do
+    GenServer.cast(pid, {:text, :add_feature, tag})
+    pid
+  end
+
+  @doc """
+  Deactivate an OpenType feature
+  """
+  def deactivate_feature(pid, tag) do
+    GenServer.cast(pid, {:text, :remove_feature, tag})
+    pid
+  end
+
+  @doc """
   Set line space
   """
   def text_leading(pid, size) do
@@ -136,6 +153,14 @@ defmodule Gutenex do
   end
 
   @doc """
+  Register a font for embedding
+  """
+  def register_font(pid, font_name, font_data) do
+    GenServer.cast(pid, {:font, :register, {font_name, font_data}})
+    pid
+  end
+
+  @doc """
   Gets the current stream
   """
   def stream(pid) do
@@ -158,17 +183,15 @@ defmodule Gutenex do
   end
 
   def export(pid, file_name) do
-    File.write file_name, export(pid)
+    File.write(file_name, export(pid))
     pid
   end
-
 
   #####################################
   #              Images               #
   #####################################
 
-
-  def add_image(pid, image_alias, %Imagineer.Image.PNG{}=image) do
+  def add_image(pid, image_alias, %Imagineer.Image.PNG{} = image) do
     GenServer.cast(pid, {:image, :add, {image_alias, image}})
     pid
   end
@@ -207,7 +230,7 @@ defmodule Gutenex do
     move_to(pid, {point_x, point_y})
   end
 
-  def move_to(pid, {point_x, point_y}=point) when is_integer(point_x) and is_integer(point_y) do
+  def move_to(pid, {point_x, point_y} = point) when is_integer(point_x) and is_integer(point_y) do
     GenServer.cast(pid, {:geometry, :move_to, point})
     pid
   end
@@ -278,7 +301,7 @@ defmodule Gutenex do
   Sets the current page
   """
   def handle_cast({:context, :put, {key, value}}, [context, stream]) do
-    new_context = Map.put context, key, value
+    new_context = Map.put(context, key, value)
     {:noreply, [new_context, stream]}
   end
 
@@ -286,7 +309,7 @@ defmodule Gutenex do
     Begin a section of text
   """
   def handle_cast({:text, :begin}, [context, stream]) do
-    stream = stream <> Text.begin_text
+    stream = stream <> Text.begin_text()
     {:noreply, [context, stream]}
   end
 
@@ -294,7 +317,7 @@ defmodule Gutenex do
     End a section of text
   """
   def handle_cast({:text, :end}, [context, stream]) do
-    stream = stream <> Text.end_text
+    stream = stream <> Text.end_text()
     {:noreply, [context, stream]}
   end
 
@@ -302,7 +325,19 @@ defmodule Gutenex do
     Write some text!
   """
   def handle_cast({:text, :write, text_to_write}, [context, stream]) do
-    stream = stream <> Text.write_text(text_to_write)
+    stream =
+      if is_pid(context.current_font) do
+        scale = OpenTypeFont.scale_factor(context.current_font)
+
+        output =
+          OpenTypeFont.layout(context.current_font, text_to_write, context.features)
+          |> Text.write_positioned_glyphs(context.current_font_size * scale)
+
+        stream <> output
+      else
+        stream <> Text.write_text(text_to_write)
+      end
+
     {:noreply, [context, stream]}
   end
 
@@ -310,7 +345,22 @@ defmodule Gutenex do
     Write some text more break line!
   """
   def handle_cast({:text, :write_br, text_to_write}, [context, stream]) do
-    stream = stream <> Text.write_text_br(text_to_write)
+    new_y = context.current_text_y - context.current_leading
+
+    stream =
+      if is_pid(context.current_font) do
+        scale = OpenTypeFont.scale_factor(context.current_font)
+
+        output =
+          OpenTypeFont.layout(context.current_font, text_to_write, context.features)
+          |> Text.write_positioned_glyphs(context.current_font_size * scale)
+
+        stream <> output <> " 1 0 0 1 #{context.current_text_x} #{new_y} Tm\n"
+      else
+        stream <> Text.write_text_br(text_to_write)
+      end
+
+    context = %Context{context | current_text_y: new_y}
     {:noreply, [context, stream]}
   end
 
@@ -319,6 +369,7 @@ defmodule Gutenex do
   """
   def handle_cast({:text, :line_spacing, size}, [context, stream]) do
     stream = stream <> Text.line_spacing(size)
+    context = %Context{context | current_leading: size}
     {:noreply, [context, stream]}
   end
 
@@ -327,6 +378,7 @@ defmodule Gutenex do
   """
   def handle_cast({:text, :position, {x_coordinate, y_coordinate}}, [context, stream]) do
     stream = stream <> Text.text_position(x_coordinate, y_coordinate)
+    context = %Context{context | current_text_x: x_coordinate, current_text_y: y_coordinate}
     {:noreply, [context, stream]}
   end
 
@@ -343,7 +395,7 @@ defmodule Gutenex do
   #####################################
 
   def handle_cast({:templates, :add, {template_alias, template_contents}}, [context, stream]) do
-    template_aliases =  Map.put context.template_aliases, template_alias, template_contents
+    template_aliases = Map.put(context.template_aliases, template_alias, template_contents)
     {:noreply, [%Context{template_aliases: template_aliases}, stream]}
   end
 
@@ -357,12 +409,12 @@ defmodule Gutenex do
   #####################################
 
   def handle_cast({:image, :add, {image_alias, image}}, [context, stream]) do
-    images =  Map.put context.images, image_alias, image
+    images = Map.put(context.images, image_alias, image)
     {:noreply, [%Context{context | images: images}, stream]}
   end
 
   def handle_cast({:image, :write, {image_alias, options}}, [context, stream]) do
-    image = Map.get context.images, image_alias
+    image = Map.get(context.images, image_alias)
     stream = stream <> Gutenex.PDF.Images.set_image(image_alias, image, options)
     {:noreply, [context, stream]}
   end
@@ -376,7 +428,8 @@ defmodule Gutenex do
   """
   def handle_cast({:font, :set, {font_name, font_size}}, [context, stream]) do
     stream = stream <> Font.set_font(context.fonts, font_name, font_size)
-    {:noreply, [context, stream]}
+    new_context = Context.set_current_font(context, font_name, font_size)
+    {:noreply, [new_context, stream]}
   end
 
   @doc """
@@ -384,7 +437,27 @@ defmodule Gutenex do
   """
   def handle_cast({:font, :set, font_name}, [context, stream]) do
     stream = stream <> Font.set_font(context.fonts, font_name)
-    {:noreply, [context, stream]}
+    new_context = Context.set_current_font(context, font_name)
+    {:noreply, [new_context, stream]}
+  end
+
+  @doc """
+    Register a font for usage
+  """
+  def handle_cast({:font, :register, {font_name, font_data}}, [context, stream]) do
+    new_context = Gutenex.PDF.Context.register_font(context, font_name, font_data)
+    {:noreply, [new_context, stream]}
+  end
+
+  def handle_cast({:text, :add_feature, tag}, [context, stream]) do
+    new_context = %Context{context | features: [tag | context.features]}
+    {:noreply, [new_context, stream]}
+  end
+
+  def handle_cast({:text, :remove_feature, tag}, [context, stream]) do
+    features = context.features |> Enum.filter(fn t -> t != tag end)
+    new_context = %Context{context | features: features}
+    {:noreply, [new_context, stream]}
   end
 
   #####################################
